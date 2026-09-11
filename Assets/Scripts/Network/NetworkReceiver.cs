@@ -123,21 +123,41 @@ namespace KartIHC.Network
             switch (command.command.ToLowerInvariant())
             {
                 case "accelerate":
-                    Enqueue(() => OnAccelerate?.Invoke(command.value));
+                    Enqueue(() =>
+                    {
+                        Debug.Log($"[NetworkReceiver] OnAccelerate received, value={command.value}");
+                        OnAccelerate?.Invoke(command.value);
+                    });
                     break;
                 case "brake":
-                    Enqueue(() => OnBrake?.Invoke(command.value));
+                    Enqueue(() =>
+                    {
+                        Debug.Log($"[NetworkReceiver] OnBrake received, value={command.value}");
+                        OnBrake?.Invoke(command.value);
+                    });
                     break;
                 case "steer":
-                    Enqueue(() => OnSteer?.Invoke(command.value));
+                    Enqueue(() =>
+                    {
+                        Debug.Log($"[NetworkReceiver] OnSteer received, value={command.value}");
+                        OnSteer?.Invoke(command.value);
+                    });
                     break;
                 case "use_item":
                 case "useitem":
-                    Enqueue(() => OnUseItem?.Invoke());
+                    Enqueue(() =>
+                    {
+                        Debug.Log("[NetworkReceiver] OnUseItem received");
+                        OnUseItem?.Invoke();
+                    });
                     break;
                 case "start_race":
                 case "startrace":
-                    Enqueue(() => OnStartRace?.Invoke());
+                    Enqueue(() =>
+                    {
+                        Debug.Log("[NetworkReceiver] OnStartRace received");
+                        OnStartRace?.Invoke();
+                    });
                     break;
                 default:
                     Debug.LogWarning($"[NetworkReceiver] Unknown command received: '{command.command}'");
