@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using KartIHC.Kart;
 using UnityEngine;
 
 namespace KartIHC.Network
@@ -17,6 +18,9 @@ namespace KartIHC.Network
     {
         [SerializeField]
         private int port = 9000;
+
+        [SerializeField]
+        private KartController kartController;
 
         public event Action<float> OnAccelerate;
         public event Action<float> OnBrake;
@@ -126,6 +130,7 @@ namespace KartIHC.Network
                     Enqueue(() =>
                     {
                         Debug.Log($"[NetworkReceiver] OnAccelerate received, value={command.value}");
+                        kartController?.SetAccelerate(command.value);
                         OnAccelerate?.Invoke(command.value);
                     });
                     break;
@@ -133,6 +138,7 @@ namespace KartIHC.Network
                     Enqueue(() =>
                     {
                         Debug.Log($"[NetworkReceiver] OnBrake received, value={command.value}");
+                        kartController?.SetBrake(command.value);
                         OnBrake?.Invoke(command.value);
                     });
                     break;
@@ -140,6 +146,7 @@ namespace KartIHC.Network
                     Enqueue(() =>
                     {
                         Debug.Log($"[NetworkReceiver] OnSteer received, value={command.value}");
+                        kartController?.SetSteer(command.value);
                         OnSteer?.Invoke(command.value);
                     });
                     break;
