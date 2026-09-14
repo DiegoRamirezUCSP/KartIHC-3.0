@@ -27,8 +27,12 @@ namespace KartIHC.EditorTools
 
             GameObject track = new GameObject("Track");
 
-            BuildWallRing(track.transform, InnerRadius, "InnerWall");
-            BuildWallRing(track.transform, OuterRadius, "OuterWall");
+            Material wallMatA = LoadMaterial("Mat_TrackWallA");
+            Material wallMatB = LoadMaterial("Mat_TrackWallB");
+            BuildWallRing(track.transform, InnerRadius, "InnerWall", wallMatA, wallMatB);
+            BuildWallRing(track.transform, OuterRadius, "OuterWall", wallMatA, wallMatB);
+
+            ApplyMaterial(GameObject.Find("Ground"), "Mat_Ground");
 
             float midRadius = (InnerRadius + OuterRadius) * 0.5f;
             Vector3[] midPoints = ComputeCirclePoints(midRadius, Segments);
@@ -48,7 +52,7 @@ namespace KartIHC.EditorTools
             Selection.activeGameObject = track;
         }
 
-        private static void BuildWallRing(Transform parent, float radius, string namePrefix)
+        private static void BuildWallRing(Transform parent, float radius, string namePrefix, Material matA, Material matB)
         {
             Vector3[] points = ComputeCirclePoints(radius, Segments);
 
@@ -66,6 +70,12 @@ namespace KartIHC.EditorTools
                 segment.transform.position = midpoint + Vector3.up * (WallHeight * 0.5f);
                 segment.transform.rotation = Quaternion.LookRotation(direction, Vector3.up);
                 segment.transform.localScale = new Vector3(WallThickness, WallHeight, length);
+
+                Material material = (i % 2 == 0) ? matA : matB;
+                if (material != null)
+                {
+                    segment.GetComponent<MeshRenderer>().sharedMaterial = material;
+                }
             }
         }
 
@@ -77,11 +87,42 @@ namespace KartIHC.EditorTools
             startLine.transform.position = new Vector3(position.x, 0.05f, position.z);
             startLine.transform.rotation = rotation;
             startLine.transform.localScale = new Vector3(OuterRadius - InnerRadius, 0.05f, 1f);
+            ApplyMaterial(startLine, "Mat_StartLine");
 
             BoxCollider boxCollider = startLine.GetComponent<BoxCollider>();
             if (boxCollider != null)
             {
                 boxCollider.isTrigger = true;
+            }
+        }
+
+        private static Material LoadMaterial(string materialName)
+        {
+            Material material = AssetDatabase.LoadAssetAtPath<Material>($"Assets/Materials/{materialName}.mat");
+            if (material == null)
+            {
+                Debug.LogWarning($"[TrackBuilder] Material '{materialName}' not found in Assets/Materials. Run KartIHC/Setup Materials first.");
+            }
+            return material;
+        }
+
+        private static void ApplyMaterial(GameObject go, string materialName)
+        {
+            if (go == null)
+            {
+                return;
+            }
+
+            Material material = LoadMaterial(materialName);
+            if (material == null)
+            {
+                return;
+            }
+
+            MeshRenderer renderer = go.GetComponent<MeshRenderer>();
+            if (renderer != null)
+            {
+                renderer.sharedMaterial = material;
             }
         }
 

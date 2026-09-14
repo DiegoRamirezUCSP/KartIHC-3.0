@@ -1,0 +1,18 @@
+fileFormatVersion: 2
+guid: e4b0f53cc6cb8334a9e8e40c3b9289fa
+MonoImporter:
+  externalObjects: {}
+  serializedVersion: 2
+  defaultReferences: []
+  executionOrder: 0
+  icon: {instanceID: 0}
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 153218
+  packageName: Arcade Racing Cars - Pickup Jeep
+  packageVersion: 1.0
+  assetPath: Assets/Arcade Racing Cars/Pickup Jeep/Demo/Scripts/DemoCarController.cs
+  uploadId: 341836

@@ -1,0 +1,15 @@
+fileFormatVersion: 2
+guid: 8ccb10d6b6006d44cbd9fff02c26794e
+NativeFormatImporter:
+  externalObjects: {}
+  mainObjectFileID: 2100000
+  userData: 
+  assetBundleName: 
+  assetBundleVariant: 
+AssetOrigin:
+  serializedVersion: 1
+  productId: 153218
+  packageName: Arcade Racing Cars - Pickup Jeep
+  packageVersion: 1.0
+  assetPath: Assets/Arcade Racing Cars/Pickup Jeep/Materials/Standard/ArcadeCars_Jeep_Base_Color_Standard.mat
+  uploadId: 341836
