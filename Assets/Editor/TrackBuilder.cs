@@ -10,11 +10,16 @@ namespace KartIHC.EditorTools
     /// </summary>
     public static class TrackBuilder
     {
-        private const int Segments = 16;
-        private const float InnerRadius = 15f;
-        private const float OuterRadius = 23f;
+        private const int Segments = 32;
+        private const float InnerRadius = 30f;
+        private const float OuterRadius = 48f;
         private const float WallHeight = 2f;
         private const float WallThickness = 0.5f;
+        private const float GroundMargin = 20f;
+        private const float RockOffset = 3f;
+        private const int RockEverySegments = 3;
+
+        private static readonly Vector3 RockScale = new Vector3(0.8f, 0.6f, 0.7f);
 
         [MenuItem("KartIHC/Build Track")]
         public static void BuildTrack()
@@ -27,12 +32,14 @@ namespace KartIHC.EditorTools
 
             GameObject track = new GameObject("Track");
 
-            Material wallMatA = LoadMaterial("Mat_TrackWallA");
-            Material wallMatB = LoadMaterial("Mat_TrackWallB");
+            Material wallMatA = LoadMaterial("Mat_OffroadWallA");
+            Material wallMatB = LoadMaterial("Mat_OffroadWallB");
             BuildWallRing(track.transform, InnerRadius, "InnerWall", wallMatA, wallMatB);
             BuildWallRing(track.transform, OuterRadius, "OuterWall", wallMatA, wallMatB);
 
-            ApplyMaterial(GameObject.Find("Ground"), "Mat_Ground");
+            BuildRockDecoration(track.transform);
+
+            ResizeAndPaintGround();
 
             float midRadius = (InnerRadius + OuterRadius) * 0.5f;
             Vector3[] midPoints = ComputeCirclePoints(midRadius, Segments);
@@ -75,6 +82,48 @@ namespace KartIHC.EditorTools
                 if (material != null)
                 {
                     segment.GetComponent<MeshRenderer>().sharedMaterial = material;
+                }
+            }
+        }
+
+        private static void ResizeAndPaintGround()
+        {
+            GameObject ground = GameObject.Find("Ground");
+            if (ground == null)
+            {
+                return;
+            }
+
+            // Unity's default Plane primitive is 10x10 world units at scale 1.
+            float diameterWithMargin = (OuterRadius * 2f) + GroundMargin;
+            float scaleFactor = diameterWithMargin / 10f;
+            ground.transform.localScale = new Vector3(scaleFactor, 1f, scaleFactor);
+
+            ApplyMaterial(ground, "Mat_OffroadGround");
+        }
+
+        private static void BuildRockDecoration(Transform parent)
+        {
+            Material rockMaterial = LoadMaterial("Mat_Rock");
+            Vector3[] points = ComputeCirclePoints(OuterRadius + RockOffset, Segments);
+
+            for (int i = 0; i < Segments; i += RockEverySegments)
+            {
+                GameObject rock = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                rock.name = $"Rock_{i}";
+                rock.transform.SetParent(parent, false);
+                rock.transform.position = new Vector3(points[i].x, RockScale.y * 0.5f, points[i].z);
+                rock.transform.localScale = RockScale;
+
+                if (rockMaterial != null)
+                {
+                    rock.GetComponent<MeshRenderer>().sharedMaterial = rockMaterial;
+                }
+
+                SphereCollider rockCollider = rock.GetComponent<SphereCollider>();
+                if (rockCollider != null)
+                {
+                    Object.DestroyImmediate(rockCollider);
                 }
             }
         }

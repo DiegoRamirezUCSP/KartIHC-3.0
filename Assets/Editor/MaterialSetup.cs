@@ -20,6 +20,10 @@ namespace KartIHC.EditorTools
             ("Mat_TrackWallB", "#F2F2F2"),
             ("Mat_Ground", "#4A4E54"),
             ("Mat_StartLine", "#F2C14E"),
+            ("Mat_OffroadGround", "#C2A878"),
+            ("Mat_Rock", "#8A8378"),
+            ("Mat_OffroadWallA", "#6B4423"),
+            ("Mat_OffroadWallB", "#A8895E"),
         };
 
         [MenuItem("KartIHC/Setup Materials")]

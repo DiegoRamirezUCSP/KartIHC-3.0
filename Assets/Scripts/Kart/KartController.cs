@@ -27,6 +27,9 @@ namespace KartIHC.Kart
         public float brakeTorque = 3000f;
         public float maxSteerAngle = 30f;
 
+        [Header("Input Gate")]
+        public bool InputEnabled = false;
+
         private Rigidbody rb;
 
         private void Awake()
@@ -35,8 +38,18 @@ namespace KartIHC.Kart
             rb.centerOfMass += new Vector3(0f, -0.5f, 0f);
         }
 
+        public void SetInputEnabled(bool isEnabled)
+        {
+            InputEnabled = isEnabled;
+        }
+
         public void SetAccelerate(float value)
         {
+            if (!InputEnabled)
+            {
+                return;
+            }
+
             float torque = value * motorTorque;
             rearLeft.motorTorque = torque;
             rearRight.motorTorque = torque;
@@ -44,6 +57,11 @@ namespace KartIHC.Kart
 
         public void SetBrake(float value)
         {
+            if (!InputEnabled)
+            {
+                return;
+            }
+
             float torque = value * brakeTorque;
             frontLeft.brakeTorque = torque;
             frontRight.brakeTorque = torque;
@@ -53,6 +71,11 @@ namespace KartIHC.Kart
 
         public void SetSteer(float value)
         {
+            if (!InputEnabled)
+            {
+                return;
+            }
+
             float angle = value * maxSteerAngle;
             frontLeft.steerAngle = angle;
             frontRight.steerAngle = angle;
