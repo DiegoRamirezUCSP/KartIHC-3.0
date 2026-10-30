@@ -126,7 +126,7 @@ namespace KartIHC.Network
 
             switch (command.command.ToLowerInvariant())
             {
-                case "accelerate":
+                case "ACELERAR":
                     Enqueue(() =>
                     {
                         Debug.Log($"[NetworkReceiver] OnAccelerate received, value={command.value}");
@@ -134,7 +134,7 @@ namespace KartIHC.Network
                         OnAccelerate?.Invoke(command.value);
                     });
                     break;
-                case "brake":
+                case "FRENAR":
                     Enqueue(() =>
                     {
                         Debug.Log($"[NetworkReceiver] OnBrake received, value={command.value}");

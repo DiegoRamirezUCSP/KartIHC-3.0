@@ -61,17 +61,30 @@ namespace KartIHC.UI
             }
         }
 
+        /// <summary>Lets the mode selector temporarily replace the existing start menu.</summary>
+        public void SetMainMenuVisible(bool visible)
+        {
+            if (mainMenuPanel != null)
+            {
+                mainMenuPanel.SetActive(visible);
+            }
+        }
+
         private void HandleStateChanged(GameState newState)
         {
-            if (newState != GameState.Playing)
+            bool showMain = newState == GameState.MainMenu;
+            bool hideGameplayPanels = newState == GameState.Playing || newState == GameState.Tutorial;
+
+            if (mainMenuPanel != null)
+            {
+                mainMenuPanel.SetActive(showMain);
+            }
+
+            if (!hideGameplayPanels)
             {
                 return;
             }
 
-            if (mainMenuPanel != null)
-            {
-                mainMenuPanel.SetActive(false);
-            }
             if (tutorialPanel != null)
             {
                 tutorialPanel.SetActive(false);

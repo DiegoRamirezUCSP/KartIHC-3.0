@@ -39,7 +39,9 @@ namespace KartIHC.EditorTools
             GameObject kartBody = GameObject.CreatePrimitive(PrimitiveType.Cube);
             kartBody.name = "KartBody";
             kartBody.transform.position = new Vector3(0f, 1f, 0f);
-            kartBody.transform.localScale = new Vector3(1.3f, 0.4f, 2.3f);
+            // Scale stays 1: WheelColliders under a non-uniform scale behave unreliably. The
+            // BoxCollider is sized to the Jeep chassis by KartPhysicsCalibrator.
+            kartBody.transform.localScale = Vector3.one;
 
             // The cube's own mesh is now just a physics proxy (BoxCollider stays); the visible
             // chassis comes from the imported jeep model attached below.
@@ -52,7 +54,6 @@ namespace KartIHC.EditorTools
             Rigidbody rb = kartBody.AddComponent<Rigidbody>();
             rb.mass = 800f;
             rb.linearDamping = 0.3f;
-            rb.centerOfMass = new Vector3(0f, -0.3f, 0f);
 
             WheelSpec[] wheelSpecs =
             {
@@ -91,11 +92,98 @@ namespace KartIHC.EditorTools
             // Wheel mesh fields are left unassigned — JeepModel's own wheel meshes are the
             // visible ones now, so there's nothing to point frontLeftMesh/etc. at here.
 
+            SetupKartExtras(kartBody);
+
+            // Wheel colliders onto the Jeep's wheels, suspension, center of mass, body collider.
+            // The placeholder wheel positions above are only used if the Jeep model is missing.
+            KartPhysicsCalibrator.Calibrate(kartBody);
+
             AssignNetworkReceiverTarget(controller);
             AssignCameraTarget(kartBody);
 
             Selection.activeGameObject = kartBody;
         }
+
+        /// <summary>
+        /// Adds the extra kart components (wheel visuals) to the existing KartBody
+        /// without rebuilding it, and tags it "Player".
+        /// </summary>
+        [MenuItem("KartIHC/Setup Kart Extras")]
+        public static void SetupKartExtrasMenu()
+        {
+            GameObject kartBody = GameObject.Find("KartBody");
+            if (kartBody == null)
+            {
+                Debug.LogWarning("[KartBuilder] No 'KartBody' in the scene. Run KartIHC/Build Kart first.");
+                return;
+            }
+
+            SetupKartExtras(kartBody);
+            UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(kartBody.scene);
+            Selection.activeGameObject = kartBody;
+        }
+
+        private static void SetupKartExtras(GameObject kartBody)
+        {
+            Undo.RecordObject(kartBody, "Setup Kart Extras");
+            kartBody.tag = "Player";
+
+            WheelVisuals wheelVisuals = kartBody.GetComponent<WheelVisuals>();
+            if (wheelVisuals == null)
+            {
+                wheelVisuals = Undo.AddComponent<WheelVisuals>(kartBody);
+            }
+
+            wheelVisuals.frontLeftMesh = FindDeepChild(kartBody.transform, WheelVisuals.FrontLeftName);
+            wheelVisuals.frontRightMesh = FindDeepChild(kartBody.transform, WheelVisuals.FrontRightName);
+            wheelVisuals.rearLeftMesh = FindDeepChild(kartBody.transform, WheelVisuals.RearLeftName);
+            wheelVisuals.rearRightMesh = FindDeepChild(kartBody.transform, WheelVisuals.RearRightName);
+            EditorUtility.SetDirty(wheelVisuals);
+
+            if (kartBody.GetComponent<KartRecovery>() == null)
+            {
+                Undo.AddComponent<KartRecovery>(kartBody);
+            }
+
+            if (kartBody.GetComponent<KartAudio>() == null)
+            {
+                Undo.AddComponent<KartAudio>(kartBody);
+            }
+
+            if (kartBody.GetComponent<KartResetOnMenu>() == null)
+            {
+                Undo.AddComponent<KartResetOnMenu>(kartBody);
+            }
+
+            if (wheelVisuals.frontLeftMesh == null || wheelVisuals.frontRightMesh == null ||
+                wheelVisuals.rearLeftMesh == null || wheelVisuals.rearRightMesh == null)
+            {
+                var names = new List<string>();
+                foreach (Transform child in kartBody.GetComponentsInChildren<Transform>(true))
+                {
+                    if (child.GetComponent<MeshRenderer>() != null)
+                    {
+                        names.Add(child.name);
+                    }
+                }
+                Debug.LogWarning("[KartBuilder] Some Jeep wheel meshes were not found by name. Mesh objects under KartBody: " + string.Join(", ", names));
+            }
+        }
+
+        private static Transform FindDeepChild(Transform parent, string childName)
+        {
+            foreach (Transform child in parent.GetComponentsInChildren<Transform>(true))
+            {
+                if (child.name == childName)
+                {
+                    return child;
+                }
+            }
+
+            return null;
+        }
+
+        private const float JeepTargetLength = 5f;
 
         private const string JeepPrefabPath = "Assets/Arcade Racing Cars/Pickup Jeep/Prefabs/ARC_Jeep_LWRP.prefab";
         private const string JeepPrefabSearchFolder = "Assets/Arcade Racing Cars/Pickup Jeep/Prefabs";
@@ -144,9 +232,8 @@ namespace KartIHC.EditorTools
                 modelLength = bounds.size.z;
             }
 
-            float wheelbase = Mathf.Abs(wheelColliders["FL"].transform.position.z - wheelColliders["RL"].transform.position.z);
-            float targetLength = wheelbase > 0.01f ? wheelbase : 2.3f;
-            float uniformScale = modelLength > 0.01f ? targetLength / modelLength : 1f;
+            // Fixed overall length (the size the Jeep had before the colliders were aligned to it).
+            float uniformScale = modelLength > 0.01f ? JeepTargetLength / modelLength : 1f;
 
             jeepInstance.transform.localScale = new Vector3(
                 uniformScale / parentScale.x,
