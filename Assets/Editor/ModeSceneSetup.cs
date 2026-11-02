@@ -46,6 +46,37 @@ namespace KartIHC.Editor
             Debug.Log($"Se agregaron modelos industriales a {added} cámaras en EscapeCourse.");
         }
 
+        [MenuItem("Kart IHC/Escape/Configurar dron y retirar cámaras fijas")]
+        public static void ConfigureSavedEscapeDrone()
+        {
+            if (!EditorSceneManager.SaveCurrentModifiedScenesIfUserWantsTo()) return;
+            Scene scene = EditorSceneManager.OpenScene(EscapePath, OpenSceneMode.Single);
+            int removed = 0;
+            foreach (Camera camera in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
+            {
+                if (!camera.name.StartsWith("EscapeSecurityCamera_")) continue;
+                Object.DestroyImmediate(camera.gameObject);
+                removed++;
+            }
+            foreach (GameObject sceneObject in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+            {
+                if (sceneObject.name.StartsWith("EscapeCameraPole_") || sceneObject.name.StartsWith("EscapeCameraMount_"))
+                {
+                    Object.DestroyImmediate(sceneObject);
+                    removed++;
+                }
+            }
+            if (GameObject.Find("EscapeDroneSpawn") == null)
+            {
+                var spawn = new GameObject("EscapeDroneSpawn");
+                spawn.transform.SetPositionAndRotation(new Vector3(0f, 20f, -27f),
+                    Quaternion.LookRotation(new Vector3(0f, -0.42f, 1f), Vector3.up));
+            }
+            EditorSceneManager.SaveScene(scene, EscapePath);
+            AssetDatabase.SaveAssets();
+            Debug.Log($"Punto de aparición del dron configurado; se retiraron {removed} elementos de cámaras fijas.");
+        }
+
         private static void CreateMenuScene()
         {
             Scene scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
@@ -92,7 +123,7 @@ namespace KartIHC.Editor
             BuildRing(environment.transform, "EscapeInnerBarrier", 17.3f, 17.9f, 2.3f, barrier, true);
             BuildRing(environment.transform, "EscapeOuterBarrier", 32.1f, 32.7f, 2.3f, barrier, true);
             BuildDoors(environment.transform, gate);
-            BuildCameras(environment.transform);
+            BuildDroneSpawn(environment.transform);
             BuildFinish(environment.transform);
 
             var spawn = new GameObject("EscapeKartSpawn");
@@ -136,32 +167,12 @@ namespace KartIHC.Editor
             }
         }
 
-        private static void BuildCameras(Transform parent)
+        private static void BuildDroneSpawn(Transform parent)
         {
-            Material housingMaterial = MakeMaterial("Camera Housing", new Color(0.13f, 0.18f, 0.21f));
-            Material lensMaterial = MakeMaterial("Camera Lens", new Color(0.035f, 0.09f, 0.12f));
-            Material indicatorMaterial = MakeMaterial("Camera Indicator", new Color(0.95f, 0.2f, 0.06f));
-            for (int i = 0; i < 3; i++)
-            {
-                float cameraAngle = (i * 120f + 55f) * Mathf.Deg2Rad;
-                float doorAngle = (i * 120f + 25f) * Mathf.Deg2Rad;
-                Vector3 camPos = new Vector3(Mathf.Cos(cameraAngle), 0f, Mathf.Sin(cameraAngle)) * 34f + Vector3.up * 5f;
-                Vector3 target = new Vector3(Mathf.Cos(doorAngle), 0f, Mathf.Sin(doorAngle)) * 25f + Vector3.up * 1.2f;
-                Vector3 polePosition = new Vector3(Mathf.Cos(cameraAngle), 0f, Mathf.Sin(cameraAngle)) * 34f;
-                GameObject pole = MakeCube(parent, $"EscapeCameraPole_{i + 1}", polePosition + Vector3.up * 2.4f, new Vector3(.24f, 4.8f, .24f), housingMaterial);
-                pole.GetComponent<Collider>().enabled = false;
-                GameObject mount = MakeCube(parent, $"EscapeCameraMount_{i + 1}", polePosition + Vector3.up * 4.65f, new Vector3(.72f, .14f, .2f), housingMaterial);
-                mount.GetComponent<Collider>().enabled = false;
-                var cameraObject = new GameObject($"EscapeSecurityCamera_{i + 1}");
-                cameraObject.transform.SetParent(parent);
-                cameraObject.transform.SetPositionAndRotation(camPos, Quaternion.LookRotation(target - camPos));
-                Camera camera = cameraObject.AddComponent<Camera>();
-                camera.fieldOfView = 58f;
-                camera.nearClipPlane = .8f;
-                camera.enabled = false;
-                cameraObject.AddComponent<AudioListener>().enabled = false;
-                AddCameraVisuals(camera, i + 1, housingMaterial, lensMaterial, indicatorMaterial, false);
-            }
+            var spawn = new GameObject("EscapeDroneSpawn");
+            spawn.transform.SetParent(parent);
+            spawn.transform.SetPositionAndRotation(new Vector3(0f, 20f, -27f),
+                Quaternion.LookRotation(new Vector3(0f, -0.42f, 1f), Vector3.up));
         }
 
         private static void AddCameraVisuals(Camera camera, int index, Material housingMaterial, Material lensMaterial, Material indicatorMaterial, bool registerUndo)

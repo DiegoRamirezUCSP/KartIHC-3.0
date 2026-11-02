@@ -16,7 +16,14 @@ public static class EscapeCourseBuilder
         cameras.Clear();
         foreach (EscapeDoor door in Object.FindObjectsByType<EscapeDoor>(FindObjectsSortMode.None)) doors.Add(door);
         foreach (Camera camera in Object.FindObjectsByType<Camera>(FindObjectsSortMode.None))
-            if (camera.CompareTag("MainCamera") == false && camera.name.StartsWith("EscapeSecurityCamera_")) cameras.Add(camera);
+        {
+            if (camera.name.StartsWith("EscapeSecurityCamera_")) Object.Destroy(camera.gameObject);
+        }
+        foreach (GameObject sceneObject in Object.FindObjectsByType<GameObject>(FindObjectsSortMode.None))
+        {
+            if (sceneObject.name.StartsWith("EscapeCameraPole_") || sceneObject.name.StartsWith("EscapeCameraMount_"))
+                Object.Destroy(sceneObject);
+        }
         doors.Sort((a, b) => a.Id.CompareTo(b.Id));
         cameras.Sort((a, b) => string.CompareOrdinal(a.name, b.name));
         KartController kart = Object.FindFirstObjectByType<KartController>();

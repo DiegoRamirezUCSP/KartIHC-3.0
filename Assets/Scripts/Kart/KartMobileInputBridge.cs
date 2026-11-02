@@ -24,8 +24,8 @@ public class KartMobileInputBridge : MonoBehaviour
     [SerializeField] private GameStateManager gameStateManager;
 
     [Header("Driving")]
-    [Tooltip("When enabled, the kart accelerates once the race has started. Turn it off to use W/S or arrow keys.")]
-    [SerializeField] private bool autoAccelerate = true;
+    [Tooltip("When enabled, the kart accelerates automatically if the leg-motion camera is disconnected. Turn it off to use W/S or arrow keys.")]
+    [SerializeField] private bool autoAccelerate = false;
     [SerializeField] private float autoThrottle = 1f;
     [SerializeField] private float manualThrottle = 1f;
     [SerializeField] private float manualBrake = 1f;

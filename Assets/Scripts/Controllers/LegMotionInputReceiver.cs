@@ -18,6 +18,8 @@ using UnityEngine.InputSystem;
 /// </summary>
 public class LegMotionInputReceiver : MonoBehaviour
 {
+    private static bool resumeCameraAfterSceneChange;
+
     [SerializeField] private int port = 5555;
     [SerializeField] private float timeoutSeconds = 1f;
     [SerializeField] private bool showDiagnostics = true;
@@ -50,9 +52,10 @@ public class LegMotionInputReceiver : MonoBehaviour
     private byte[] latestJpeg;
     private bool cameraStartedByUs;
     private string cameraStatus = "Cámara apagada";
+    private string previewStatus = "Vista previa sin iniciar";
     private string calibrationStatus = "Sin calibrar";
     private string projectRoot;
-    private int selectedCameraIndex = -1;
+    private bool previewFrameReceived;
 
     public bool IsConnected => ReadElapsedSeconds(lastPacketTime) <= timeoutSeconds && !LastCommand.StartsWith("CALIBRACION");
     public float Throttle => IsConnected ? throttle : 0f;
@@ -62,6 +65,8 @@ public class LegMotionInputReceiver : MonoBehaviour
     public string CameraStatus => cameraStatus;
     public string CalibrationStatus => calibrationStatus;
     public Texture2D PreviewTexture => previewTexture;
+    public bool PreviewFrameReceived => previewFrameReceived;
+    public string PreviewStatus => previewStatus;
     public bool CameraRunning => cameraProcess != null && !cameraProcess.HasExited;
 
     private void OnEnable()
@@ -97,6 +102,15 @@ public class LegMotionInputReceiver : MonoBehaviour
         previewTexture = new Texture2D(2, 2, TextureFormat.RGB24, false);
         StartPreviewReceiver();
         Debug.Log($"[LegMotionInputReceiver] Escuchando comandos de piernas en UDP {port}.");
+    }
+
+    private void Start()
+    {
+        // Start runs after the previous scene's objects have been destroyed,
+        // so a camera active before a mode change can be restarted reliably.
+        if (!resumeCameraAfterSceneChange) return;
+        resumeCameraAfterSceneChange = false;
+        StartCamera();
     }
 
     public void StartCamera()
@@ -188,6 +202,7 @@ public class LegMotionInputReceiver : MonoBehaviour
         try
         {
             previewClient = new UdpClient(previewPort);
+            previewStatus = $"UDP {previewPort} escuchando";
             previewRunning = true;
             previewThread = new Thread(() =>
             {
@@ -205,7 +220,12 @@ public class LegMotionInputReceiver : MonoBehaviour
             }) { IsBackground = true, Name = "LegCameraPreview-UDP" };
             previewThread.Start();
         }
-        catch (SocketException exception) { Debug.LogError($"[LegMotionInputReceiver] No se pudo abrir vista previa {previewPort}: {exception.Message}"); }
+        catch (SocketException exception)
+        {
+            previewStatus = $"No se pudo abrir UDP {previewPort}: {exception.Message}";
+            Debug.LogError($"[LegMotionInputReceiver] {previewStatus}");
+        }
+
     }
 
     private void Update()
@@ -227,8 +247,16 @@ public class LegMotionInputReceiver : MonoBehaviour
         lock (previewLock) { if (latestJpeg != null) { jpeg = latestJpeg; latestJpeg = null; } }
         if (jpeg != null && previewTexture != null)
         {
-            previewTexture.LoadImage(jpeg);
-            cameraStatus = "Cámara activa";
+            previewFrameReceived = previewTexture.LoadImage(jpeg);
+            if (previewFrameReceived)
+            {
+                cameraStatus = "Imagen recibida";
+                previewStatus = $"Imagen recibida por UDP {previewPort}";
+            }
+            else
+            {
+                previewStatus = "Paquete UDP recibido, pero no es una imagen JPEG válida";
+            }
         }
         if (cameraProcess != null && cameraProcess.HasExited)
         {
@@ -240,7 +268,6 @@ public class LegMotionInputReceiver : MonoBehaviour
         if (LastCommand == "CAMARA_ACTIVA") cameraStatus = "Cámara activa";
         if (LastCommand.StartsWith("CAMARA ") && int.TryParse(LastCommand.Substring(7), out int cameraIndex))
         {
-            selectedCameraIndex = cameraIndex;
             cameraStatus = $"Cámara {cameraIndex} activa";
         }
         if (LastCommand == "CALIBRANDO" || LastCommand == "CALIBRACION_LISTA" || LastCommand == "CALIBRACION_FALLIDA")
@@ -249,14 +276,21 @@ public class LegMotionInputReceiver : MonoBehaviour
         }
     }
 
-    public string HudCameraStatus => $"{cameraStatus} | {calibrationStatus}\nF6 cámara  F7 cambiar  F8 calibrar";
+    public string HudCameraStatus => $"{cameraStatus} | {calibrationStatus}\n{previewStatus}\nF6 cámara  F7 cambiar  F8 calibrar";
 
     private void OnDestroy()
     {
+        bool resumeCamera = CameraRunning;
         UnsubscribeVoice();
         StopCamera();
+        if (resumeCamera) resumeCameraAfterSceneChange = true;
+        isRunning = false;
+        udpClient?.Close();
+        udpClient = null;
+        receiveThread = null;
         previewRunning = false;
         previewClient?.Close();
+        previewClient = null;
         previewThread = null;
         if (previewTexture != null) Destroy(previewTexture);
     }

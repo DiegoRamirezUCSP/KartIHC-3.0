@@ -99,7 +99,7 @@ public class GameHUD : MonoBehaviour
 
         GUILayout.EndArea();
 
-        if (showLegCameraPanel && legInput != null && SceneManager.GetActiveScene().name != "EscapeCourse")
+        if (showLegCameraPanel && legInput != null)
         {
             DrawLegCameraPanel();
         }
@@ -126,7 +126,10 @@ public class GameHUD : MonoBehaviour
         }
 
         float width = Mathf.Min(EscapePanelWidth, Screen.width - margin * 2f);
-        float height = 55f + EscapeModeHudFeed.Messages.Count * 24f;
+        bool showDroneTargets = bridge != null && bridge.IsHacker;
+        bool showNetworkTest = bridge != null && bridge.NetworkDiagnosticsEnabled;
+        float height = 55f + EscapeModeHudFeed.Messages.Count * 24f +
+                       (showDroneTargets ? 135f : 0f) + (showNetworkTest ? 58f : 0f);
         Rect area = new Rect(Screen.width - width - margin, margin, width, height);
         GUI.Box(area, "MODO ESCAPE · ESTADO Y MENSAJES");
         GUILayout.BeginArea(new Rect(area.x + 10f, area.y + 24f, area.width - 20f, area.height - 28f));
@@ -134,6 +137,20 @@ public class GameHUD : MonoBehaviour
         GUILayout.Label($"<b>{status}</b>", escapeTextStyle);
         foreach (string message in EscapeModeHudFeed.Messages)
             GUILayout.Label("• " + message, escapeTextStyle);
+        if (showNetworkTest)
+        {
+            GUILayout.Space(5f);
+            GUILayout.Label("PRUEBA DE RED · " + bridge.NetworkTestStatus, escapeTextStyle);
+            GUILayout.Label($"Sondas: {bridge.LatencyProbesSent} enviadas · {bridge.LatencyRepliesReceived} respuestas · {bridge.LatencyProbesLost} perdidas",
+                escapeTextStyle);
+        }
+        if (showDroneTargets)
+        {
+            GUILayout.Space(6f);
+            GUILayout.Label("DRON: inclina = vuelo · palanca = altura · gatillos = zoom · mantén botón para hackear", escapeTextStyle);
+            foreach (string target in bridge.HackerTargetLabels)
+                GUILayout.Label(target, escapeTextStyle);
+        }
         GUILayout.EndArea();
     }
 
@@ -144,9 +161,18 @@ public class GameHUD : MonoBehaviour
         Rect area = new Rect(Screen.width - width - margin, Screen.height - height - margin, width, height);
         GUI.Box(area, "CÁMARA DE PIERNAS");
         Rect preview = new Rect(area.x + 8, area.y + 24, area.width - 16, area.height - 80);
-        if (legInput.PreviewTexture != null && legInput.PreviewTexture.width > 2)
+        if (legInput.PreviewFrameReceived && legInput.PreviewTexture != null && legInput.PreviewTexture.width > 2)
         {
             GUI.DrawTexture(preview, legInput.PreviewTexture, ScaleMode.ScaleToFit);
+        }
+        else
+        {
+            string placeholder = legInput.PreviewStatus.StartsWith("No se pudo") || legInput.PreviewStatus.Contains("no es una imagen")
+                ? legInput.PreviewStatus
+                : legInput.CameraRunning
+                    ? "Esperando imagen UDP de la cámara..."
+                    : "Sin imagen. Di «activar cámara» o pulsa F6.";
+            GUI.Label(preview, placeholder, GUI.skin.box);
         }
         GUI.Label(new Rect(area.x + 8, area.yMax - 46, area.width - 16, 40), legInput.HudCameraStatus, GUI.skin.label);
     }
@@ -183,7 +209,7 @@ public class GameHUD : MonoBehaviour
 
         if (!connected)
         {
-            state = "";
+            state = "<color=#FFD166>W/S + A/D respaldo</color>";
         }
         else if (legInput.Brake > 0.1f)
         {

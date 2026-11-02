@@ -58,6 +58,7 @@ namespace KartIHC.Gameplay
         private bool didChangeCamera;
         private bool didOpenDoor;
         private bool didZoom;
+        private bool didDroneAltitude;
 
         private GUIStyle titleStyle;
         private GUIStyle textStyle;
@@ -180,7 +181,7 @@ namespace KartIHC.Gameplay
                     if (tutorialId == 4)
                     {
                         title = "TUTORIAL 4: HACKER";
-                        instruction = "Conecta un mando PS4. Mantén □ para cambiar de cámara; mueve el mando para mirar con giroscopio; usa L2/R2 para zoom y mantén ○ para abrir una puerta. Di \"cancelar tutorial\" para salir.";
+                        instruction = "Conecta un mando PS4. Inclínalo para volar el dron; usa la palanca izquierda arriba/abajo para cambiar altura. L2/R2 controlan el zoom. Mantén □ △ ○ o × para hackear el objetivo cercano asignado a ese botón. Di \"cancelar tutorial\" para salir.";
                     }
                     else
                     {
@@ -198,14 +199,16 @@ namespace KartIHC.Gameplay
             EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
             if (bridge != null)
             {
-                didChangeCamera |= bridge.SelectedCameraIndex > 0;
-                didOpenDoor |= bridge.AnyDoorOpen;
+                didChangeCamera |= bridge.DroneHasMoved;
+                didDroneAltitude |= bridge.DroneAltitudeUsed;
+                didOpenDoor |= bridge.DoorHackUsed;
                 didZoom |= bridge.ZoomUsed;
             }
-            progress = BuildChecklistLine("Mantener □ para cambiar cámara", didChangeCamera) + "\n" +
+            progress = BuildChecklistLine("Inclinar mando para volar", didChangeCamera) + "\n" +
+                       BuildChecklistLine("Palanca arriba/abajo para altura", didDroneAltitude) + "\n" +
                        BuildChecklistLine("Usar L2 o R2 para zoom", didZoom) + "\n" +
-                       BuildChecklistLine("Mantener ○ para abrir puerta", didOpenDoor);
-            if (didChangeCamera && didZoom && didOpenDoor) CompleteTutorial();
+                       BuildChecklistLine("Mantener un botón para hackear", didOpenDoor);
+            if (didChangeCamera && didDroneAltitude && didZoom && didOpenDoor) CompleteTutorial();
         }
 
         private void HandleStateChanged(GameState state)

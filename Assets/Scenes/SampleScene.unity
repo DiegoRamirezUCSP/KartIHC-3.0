@@ -77727,7 +77727,7 @@ MonoBehaviour:
   voiceInput: {fileID: 1098203403}
   inventory: {fileID: 0}
   gameStateManager: {fileID: 0}
-  autoAccelerate: 1
+  autoAccelerate: 0
   autoThrottle: 1
   manualThrottle: 1
   manualBrake: 1

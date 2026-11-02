@@ -1,14 +1,17 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using KartIHC.Kart;
 using Unity.Collections;
 using Unity.Netcode;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.InputSystem.Controls;
+using Stopwatch = System.Diagnostics.Stopwatch;
 
 /// <summary>
 /// Relays authoritative kart, gate and finish state through the host's NGO session.
-/// The hacker's security-camera selection stays local and only streams no video.
+/// The hacker's reconnaissance drone is controlled and rendered locally.
 /// </summary>
 public sealed class EscapeModeNetworkBridge : MonoBehaviour
 {
@@ -17,7 +20,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const string DoorStateMessage = "KartIHC.Escape.DoorState";
     private const string FinishMessage = "KartIHC.Escape.Finish";
     private const string StateRequestMessage = "KartIHC.Escape.StateRequest";
+    private const string LatencyProbeMessage = "KartIHC.Escape.LatencyProbe";
+    private const string LatencyReplyMessage = "KartIHC.Escape.LatencyReply";
     private const float KartSendInterval = 1f / 20f;
+    private const double LatencyProbeIntervalSeconds = 1.0;
+    private const double LatencyProbeTimeoutSeconds = 3.0;
 
     private static EscapeModeNetworkBridge instance;
     private readonly bool[] doorStates = new bool[3];
@@ -27,32 +34,61 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private bool isHost;
     private bool isHacker;
     private bool networked;
+    private bool networkDiagnosticsEnabled;
     private bool handlersRegistered;
     private float nextKartSend;
-    private float circleHeldTime;
-    private float squareHeldTime;
-    private bool doorWasHeld;
-    private bool squareHoldHandled;
-    private int heldDoorId = -1;
-    private int cameraIndex;
+    private long nextLatencyProbeTimestamp;
+    private ulong nextLatencySequence;
+    private ulong latencyPeerId;
+    private bool hasLatencyPeer;
+    private readonly Dictionary<ulong, long> pendingLatencyProbes = new Dictionary<ulong, long>();
+    private int latencyProbesSent;
+    private int latencyRepliesReceived;
+    private int latencyProbesLost;
+    private double averageRoundTripMs;
+    private double lastRoundTripMs;
+    private string latencyTestStatus = "Esperando conexión de red";
     private int gyroDeviceId = -1;
-    private float cameraYaw;
-    private float cameraPitch;
+    private Vector3 neutralGravity;
+    private bool hasNeutralGravity;
+    private float droneAltitudeInput;
+    private float droneHorizontalInput;
+    private float droneForwardInput;
+    private float nextTargetRefresh;
+    private readonly int[] targetDoorIds = { -1, -1, -1, -1 };
+    private readonly float[] targetButtonHoldTimes = new float[4];
+    private readonly bool[] targetButtonHoldHandled = new bool[4];
+    private readonly string[] hackerTargetLabels = { "Sin objetivo cercano", "Sin objetivo cercano", "Sin objetivo cercano", "Sin objetivo cercano" };
     private Vector3 remoteKartPosition;
     private Quaternion remoteKartRotation;
     private Vector3 remoteKartVelocity;
     private bool hasRemoteKartState;
-    private Camera activeSecurityCamera;
+    private Camera droneCamera;
+    private CharacterController droneController;
     private Camera savedGameplayCamera;
-    private Quaternion cameraBaseRotation;
     private string status = "";
 
     public static EscapeModeNetworkBridge Instance => instance;
     public bool HasWon { get; private set; }
-    public int SelectedCameraIndex => cameraIndex;
+    public bool IsHacker => isHacker;
+    public IReadOnlyList<string> HackerTargetLabels => hackerTargetLabels;
     public bool AnyDoorOpen { get { foreach (bool open in doorStates) if (open) return true; return false; } }
     public bool ZoomUsed { get; private set; }
+    public bool DroneHasMoved { get; private set; }
+    public bool DroneAltitudeUsed { get; private set; }
+    public bool DoorHackUsed { get; private set; }
     public string CurrentStatus => status;
+    public bool NetworkTestActive => hasLatencyPeer;
+    public bool NetworkDiagnosticsEnabled => networkDiagnosticsEnabled;
+    public string NetworkTestStatus => latencyTestStatus;
+    public double LastRoundTripMilliseconds => lastRoundTripMs;
+    public double AverageRoundTripMilliseconds => averageRoundTripMs;
+    public int LatencyProbesSent => latencyProbesSent;
+    public int LatencyRepliesReceived => latencyRepliesReceived;
+    public int LatencyProbesLost => latencyProbesLost;
+    public float LatencyPacketLossPercent => latencyRepliesReceived + latencyProbesLost == 0
+        ? 0f
+        : latencyProbesLost * 100f / (latencyRepliesReceived + latencyProbesLost);
 
     public static EscapeModeNetworkBridge StartForRole(bool hostRole, bool offlinePractice = false)
     {
@@ -86,6 +122,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     {
         isHost = hostRole;
         isHacker = !hostRole;
+        networkDiagnosticsEnabled = !practice;
         networked = !practice && NetworkManager.Singleton != null && NetworkManager.Singleton.IsListening;
         status = practice ? "Práctica Hacker individual" : hostRole ? "Eres el conductor" : "Eres el hacker";
         EscapeCourseBuilder.Build();
@@ -106,9 +143,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
         if (isHacker)
         {
-            cameraIndex = 0;
-            SelectSecurityCamera(cameraIndex);
+            CreateReconDrone();
             FindGyroDevice();
+            RefreshHackerTargets();
         }
 
         RegisterMessagesWhenReady();
@@ -140,6 +177,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             }
         }
 
+        UpdateLatencyTest();
         if (isHacker) UpdateHackerControls();
     }
 
@@ -153,6 +191,8 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorStateMessage, ReceiveDoorState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(FinishMessage, ReceiveFinish);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(StateRequestMessage, ReceiveStateRequest);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyProbeMessage, ReceiveLatencyProbe);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyReplyMessage, ReceiveLatencyReply);
         networkManager.OnClientDisconnectCallback += OnClientDisconnected;
         handlersRegistered = true;
 
@@ -161,6 +201,119 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             using (var writer = new FastBufferWriter(1, Allocator.Temp))
                 networkManager.CustomMessagingManager.SendNamedMessage(StateRequestMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
         }
+    }
+
+    private void UpdateLatencyTest()
+    {
+        if (networkManager == null || !networkManager.IsListening || !TryGetLatencyPeer(out ulong peerId))
+        {
+            if (hasLatencyPeer)
+            {
+                hasLatencyPeer = false;
+                pendingLatencyProbes.Clear();
+            }
+            latencyTestStatus = "Esperando al otro jugador";
+            return;
+        }
+
+        if (!hasLatencyPeer || latencyPeerId != peerId)
+        {
+            latencyPeerId = peerId;
+            hasLatencyPeer = true;
+            pendingLatencyProbes.Clear();
+            latencyProbesSent = 0;
+            latencyRepliesReceived = 0;
+            latencyProbesLost = 0;
+            averageRoundTripMs = 0d;
+            lastRoundTripMs = 0d;
+            nextLatencyProbeTimestamp = 0;
+        }
+
+        long now = Stopwatch.GetTimestamp();
+        long timeoutTicks = (long)(Stopwatch.Frequency * LatencyProbeTimeoutSeconds);
+        List<ulong> expired = null;
+        foreach (KeyValuePair<ulong, long> probe in pendingLatencyProbes)
+        {
+            if (now - probe.Value < timeoutTicks) continue;
+            if (expired == null) expired = new List<ulong>();
+            expired.Add(probe.Key);
+        }
+        if (expired != null)
+        {
+            foreach (ulong sequence in expired)
+            {
+                pendingLatencyProbes.Remove(sequence);
+                latencyProbesLost++;
+            }
+        }
+
+        if (nextLatencyProbeTimestamp == 0 || now >= nextLatencyProbeTimestamp)
+        {
+            ulong sequence = ++nextLatencySequence;
+            pendingLatencyProbes[sequence] = now;
+            latencyProbesSent++;
+            using (var writer = new FastBufferWriter(sizeof(ulong), Allocator.Temp))
+            {
+                writer.WriteValueSafe(sequence);
+                networkManager.CustomMessagingManager.SendNamedMessage(
+                    LatencyProbeMessage, peerId, writer, NetworkDelivery.UnreliableSequenced);
+            }
+            nextLatencyProbeTimestamp = now + (long)(Stopwatch.Frequency * LatencyProbeIntervalSeconds);
+        }
+
+        latencyTestStatus = latencyRepliesReceived == 0
+            ? latencyProbesLost == 0
+                ? "Conectado · midiendo RTT..."
+                : $"Conectado · sin respuestas ({latencyProbesLost} sondas perdidas)"
+            : $"Conectado · RTT {lastRoundTripMs:0} ms · promedio {averageRoundTripMs:0} ms · pérdida {LatencyPacketLossPercent:0.0}%";
+    }
+
+    private bool TryGetLatencyPeer(out ulong peerId)
+    {
+        peerId = 0;
+        if (networkManager == null || !networkManager.IsListening) return false;
+
+        if (networkManager.IsHost)
+        {
+            foreach (ulong clientId in networkManager.ConnectedClientsIds)
+            {
+                if (clientId == networkManager.LocalClientId) continue;
+                peerId = clientId;
+                return true;
+            }
+            return false;
+        }
+
+        if (networkManager.IsConnectedClient)
+        {
+            peerId = NetworkManager.ServerClientId;
+            return true;
+        }
+        return false;
+    }
+
+    private void ReceiveLatencyProbe(ulong senderClientId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out ulong sequence);
+        if (networkManager == null || !networkManager.IsListening) return;
+        using (var writer = new FastBufferWriter(sizeof(ulong), Allocator.Temp))
+        {
+            writer.WriteValueSafe(sequence);
+            networkManager.CustomMessagingManager.SendNamedMessage(
+                LatencyReplyMessage, senderClientId, writer, NetworkDelivery.UnreliableSequenced);
+        }
+    }
+
+    private void ReceiveLatencyReply(ulong senderClientId, FastBufferReader reader)
+    {
+        reader.ReadValueSafe(out ulong sequence);
+        if (!hasLatencyPeer || senderClientId != latencyPeerId ||
+            !pendingLatencyProbes.TryGetValue(sequence, out long sentTimestamp)) return;
+
+        pendingLatencyProbes.Remove(sequence);
+        lastRoundTripMs = (Stopwatch.GetTimestamp() - sentTimestamp) * 1000d / Stopwatch.Frequency;
+        latencyRepliesReceived++;
+        averageRoundTripMs += (lastRoundTripMs - averageRoundTripMs) / latencyRepliesReceived;
     }
 
     private void SendKartState(ulong? targetClientId = null)
@@ -192,70 +345,124 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void UpdateHackerControls()
     {
+        if (Time.unscaledTime >= nextTargetRefresh)
+        {
+            nextTargetRefresh = Time.unscaledTime + 0.2f;
+            RefreshHackerTargets();
+        }
+
         Gamepad pad = Gamepad.current;
         if (pad == null) return;
-
-        if (pad.buttonWest.wasPressedThisFrame)
-        {
-            squareHeldTime = 0f;
-            squareHoldHandled = false;
-        }
-
-        if (pad.buttonWest.isPressed)
-        {
-            squareHeldTime += Time.unscaledDeltaTime;
-            if (!squareHoldHandled && squareHeldTime >= 0.35f && EscapeCourseBuilder.Cameras.Count > 0)
-            {
-                squareHoldHandled = true;
-                SelectSecurityCamera((cameraIndex + 1) % EscapeCourseBuilder.Cameras.Count);
-            }
-        }
-
-        if (pad.buttonEast.wasPressedThisFrame) circleHeldTime = 0f;
-        if (pad.buttonEast.isPressed) circleHeldTime += Time.unscaledDeltaTime;
-
-        // Circle opens the gate paired with the active camera while held, then closes it on release.
-        bool circlePressed = pad.buttonEast.isPressed && circleHeldTime >= 0.35f;
-        if (circlePressed != doorWasHeld)
-        {
-            doorWasHeld = circlePressed;
-            heldDoorId = circlePressed ? cameraIndex : heldDoorId;
-            if (heldDoorId >= 0) RequestDoorState(heldDoorId, circlePressed);
-            if (!circlePressed) heldDoorId = -1;
-        }
-
-        if (!pad.buttonEast.isPressed && doorWasHeld)
-        {
-            doorWasHeld = false;
-            if (heldDoorId >= 0) RequestDoorState(heldDoorId, false);
-            heldDoorId = -1;
-        }
-
-        UpdateCameraLookAndZoom(pad);
+        UpdateTargetButton(pad.buttonWest, 0);
+        UpdateTargetButton(pad.buttonNorth, 1);
+        UpdateTargetButton(pad.buttonEast, 2);
+        UpdateTargetButton(pad.buttonSouth, 3);
+        UpdateDroneMotion(pad);
     }
 
-    private void UpdateCameraLookAndZoom(Gamepad pad)
+    private void UpdateTargetButton(ButtonControl button, int slot)
     {
-        if (activeSecurityCamera == null) return;
-        if (gyroDeviceId < 0) FindGyroDevice();
-
-        try
+        if (button.wasPressedThisFrame)
         {
-            if (gyroDeviceId >= 0 && JoyShockLibraryNative.JslStillConnected(gyroDeviceId))
+            targetButtonHoldTimes[slot] = 0f;
+            targetButtonHoldHandled[slot] = false;
+        }
+
+        if (button.isPressed)
+        {
+            targetButtonHoldTimes[slot] += Time.unscaledDeltaTime;
+            if (!targetButtonHoldHandled[slot] && targetButtonHoldTimes[slot] >= 0.35f)
             {
-                JoyShockLibraryNative.ImuState imu = JoyShockLibraryNative.JslGetIMUState(gyroDeviceId);
-                cameraYaw += imu.gyroY * Time.unscaledDeltaTime * 1.8f;
-                cameraPitch -= imu.gyroX * Time.unscaledDeltaTime * 1.8f;
-                cameraPitch = Mathf.Clamp(cameraPitch, -70f, 70f);
-                activeSecurityCamera.transform.rotation = cameraBaseRotation * Quaternion.Euler(cameraPitch, cameraYaw, 0f);
+                targetButtonHoldHandled[slot] = true;
+                InteractWithTarget(slot);
             }
         }
-        catch (DllNotFoundException) { status = "Falta JoyShockLibrary.dll para el giroscopio"; }
-        catch (EntryPointNotFoundException) { status = "JoyShockLibrary no es compatible"; }
+        else
+        {
+            targetButtonHoldTimes[slot] = 0f;
+            targetButtonHoldHandled[slot] = false;
+        }
+    }
+
+    private void CreateReconDrone()
+    {
+        if (savedGameplayCamera == null) savedGameplayCamera = Camera.main;
+        if (savedGameplayCamera != null) savedGameplayCamera.enabled = false;
+
+        var drone = new GameObject("EscapeReconDrone");
+        Transform spawn = GameObject.Find("EscapeDroneSpawn")?.transform;
+        if (spawn != null)
+            drone.transform.SetPositionAndRotation(spawn.position, spawn.rotation);
+        else
+        {
+            drone.transform.position = new Vector3(0f, 20f, -27f);
+            drone.transform.rotation = Quaternion.LookRotation(new Vector3(0f, -0.42f, 1f), Vector3.up);
+        }
+        droneController = drone.AddComponent<CharacterController>();
+        droneController.height = 0.7f;
+        droneController.radius = 0.35f;
+        droneController.center = Vector3.zero;
+        droneController.skinWidth = 0.04f;
+        droneCamera = drone.AddComponent<Camera>();
+        droneCamera.fieldOfView = 60f;
+        droneCamera.nearClipPlane = 0.1f;
+        droneCamera.enabled = true;
+        status = "Dron de reconocimiento activo";
+        EscapeModeHudFeed.Publish(status);
+    }
+
+    private void UpdateDroneMotion(Gamepad pad)
+    {
+        if (droneController == null || droneCamera == null) return;
+
+        if (gyroDeviceId < 0) FindGyroDevice();
+        Vector2 tilt = ReadDroneTilt();
+        droneHorizontalInput = Mathf.Lerp(droneHorizontalInput, tilt.x, Time.unscaledDeltaTime * 7f);
+        droneForwardInput = Mathf.Lerp(droneForwardInput, tilt.y, Time.unscaledDeltaTime * 7f);
+        droneAltitudeInput = pad.leftStick.y.ReadValue();
+        if (Mathf.Abs(droneAltitudeInput) < 0.15f)
+            droneAltitudeInput = pad.rightStick.y.ReadValue();
+
+        Vector3 horizontalMovement = new Vector3(droneHorizontalInput, 0f, droneForwardInput);
+        Vector3 movement = horizontalMovement * 9f + Vector3.up * (droneAltitudeInput * 5f);
+        droneController.Move(movement * Time.unscaledDeltaTime);
+
+        if (tilt.sqrMagnitude > 0.025f) DroneHasMoved = true;
+        if (Mathf.Abs(droneAltitudeInput) > 0.2f) DroneAltitudeUsed = true;
+
+        if (horizontalMovement.sqrMagnitude > 0.04f)
+        {
+            Vector3 viewDirection = horizontalMovement.normalized + Vector3.down * 0.28f;
+            Quaternion targetRotation = Quaternion.LookRotation(viewDirection, Vector3.up);
+            droneController.transform.rotation = Quaternion.Slerp(droneController.transform.rotation, targetRotation, Time.unscaledDeltaTime * 2f);
+        }
 
         float zoom = pad.rightTrigger.ReadValue() - pad.leftTrigger.ReadValue();
         if (Mathf.Abs(zoom) > 0.15f) ZoomUsed = true;
-        activeSecurityCamera.fieldOfView = Mathf.Clamp(activeSecurityCamera.fieldOfView - zoom * 55f * Time.unscaledDeltaTime, 25f, 85f);
+        droneCamera.fieldOfView = Mathf.Clamp(droneCamera.fieldOfView - zoom * 55f * Time.unscaledDeltaTime, 25f, 85f);
+    }
+
+    private Vector2 ReadDroneTilt()
+    {
+        if (gyroDeviceId < 0 || !JoyShockLibraryNative.JslStillConnected(gyroDeviceId)) return Vector2.zero;
+        try
+        {
+            JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(gyroDeviceId);
+            if (!hasNeutralGravity)
+            {
+                neutralGravity = new Vector3(motion.gravX, motion.gravY, motion.gravZ);
+                hasNeutralGravity = true;
+            }
+
+            float strafe = Mathf.Clamp((motion.gravX - neutralGravity.x) * 2.2f, -1f, 1f);
+            float forward = Mathf.Clamp((motion.gravY - neutralGravity.y) * 2.2f, -1f, 1f);
+            if (Mathf.Abs(strafe) < 0.08f) strafe = 0f;
+            if (Mathf.Abs(forward) < 0.08f) forward = 0f;
+            return new Vector2(strafe, forward);
+        }
+        catch (DllNotFoundException) { status = "Falta JoyShockLibrary.dll para el giroscopio"; }
+        catch (EntryPointNotFoundException) { status = "JoyShockLibrary no es compatible"; }
+        return Vector2.zero;
     }
 
     private void FindGyroDevice()
@@ -271,6 +478,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
                 if (JoyShockLibraryNative.JslStillConnected(handle) && JoyShockLibraryNative.JslGetControllerType(handle) == JoyShockLibraryNative.ControllerTypeDualShock4)
                 {
                     gyroDeviceId = handle;
+                    JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(handle);
+                    neutralGravity = new Vector3(motion.gravX, motion.gravY, motion.gravZ);
+                    hasNeutralGravity = true;
                     return;
                 }
             }
@@ -278,26 +488,43 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         catch (DllNotFoundException) { status = "Falta JoyShockLibrary.dll para el giroscopio"; }
     }
 
-    private void SelectSecurityCamera(int index)
+    private void RefreshHackerTargets()
     {
-        var cameras = EscapeCourseBuilder.Cameras;
-        if (cameras.Count == 0) return;
-        cameraIndex = Mathf.Clamp(index, 0, cameras.Count - 1);
-        if (activeSecurityCamera != null) activeSecurityCamera.enabled = false;
-
-        if (savedGameplayCamera == null) savedGameplayCamera = Camera.main;
-        if (isHacker && savedGameplayCamera != null) savedGameplayCamera.enabled = false;
-        activeSecurityCamera = cameras[cameraIndex];
-        activeSecurityCamera.enabled = isHacker;
-        activeSecurityCamera.fieldOfView = 58f;
-        cameraBaseRotation = activeSecurityCamera.transform.rotation;
-        cameraYaw = 0f;
-        cameraPitch = 0f;
-        if (isHacker)
+        foreach (int slot in Enumerable.Range(0, targetDoorIds.Length))
         {
-            status = $"Cámara {cameraIndex + 1}/{cameras.Count} | □ cambiar · ○ puerta · gatillos zoom";
-            EscapeModeHudFeed.Publish($"Vista cambiada a cámara {cameraIndex + 1}");
+            targetDoorIds[slot] = -1;
+            hackerTargetLabels[slot] = "Sin objetivo cercano";
         }
+
+        if (droneController == null) return;
+        string[] buttons = { "□", "△", "○", "×" };
+        EscapeDoor[] nearest = EscapeCourseBuilder.Doors
+            .OrderBy(door => (door.transform.position - droneController.transform.position).sqrMagnitude)
+            .Take(targetDoorIds.Length)
+            .ToArray();
+        for (int slot = 0; slot < nearest.Length; slot++)
+        {
+            EscapeDoor door = nearest[slot];
+            targetDoorIds[slot] = door.Id;
+            float distance = Vector3.Distance(door.transform.position, droneController.transform.position);
+            string doorState = door.Id >= 0 && door.Id < doorStates.Length && doorStates[door.Id] ? "abierta" : "cerrada";
+            hackerTargetLabels[slot] = $"{buttons[slot]} Puerta {door.Id + 1} · {distance:0} m · {doorState}";
+        }
+    }
+
+    private void InteractWithTarget(int slot)
+    {
+        if (slot < 0 || slot >= targetDoorIds.Length || targetDoorIds[slot] < 0)
+        {
+            status = "No hay un objetivo asignado a ese botón";
+            EscapeModeHudFeed.Publish(status);
+            return;
+        }
+
+        int doorId = targetDoorIds[slot];
+        DoorHackUsed = true;
+        bool open = !doorStates[doorId];
+        RequestDoorState(doorId, open);
     }
 
     private void RequestDoorState(int doorId, bool open)
@@ -411,8 +638,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (activeSecurityCamera != null) activeSecurityCamera.enabled = false;
+        if (droneCamera != null) droneCamera.enabled = false;
         if (isHacker && savedGameplayCamera != null) savedGameplayCamera.enabled = true;
+        if (droneController != null) Destroy(droneController.gameObject);
         if (networkManager != null && handlersRegistered && networkManager.CustomMessagingManager != null)
         {
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(KartMessage);
