@@ -20,6 +20,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     private GameStateManager stateManager;
     private UIController uiController;
     private EscapeModeSessionController sessionController;
+    private PythonEscapeSessionController pythonSessionController;
     private VoicePowerUpInput voiceInput;
     private GUIStyle panelStyle;
     private GUIStyle titleStyle;
@@ -101,6 +102,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (stateManager == null) stateManager = FindFirstObjectByType<GameStateManager>();
         if (uiController == null) uiController = FindFirstObjectByType<UIController>();
         if (sessionController == null) sessionController = EscapeModeSessionController.Instance;
+        if (pythonSessionController == null) pythonSessionController = PythonEscapeSessionController.Instance;
 
         VoicePowerUpInput foundVoiceInput = FindFirstObjectByType<VoicePowerUpInput>();
         if (voiceInput == foundVoiceInput) return;
@@ -113,6 +115,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;
             voiceInput.EscapeModeHostRequested -= ShowWaitingForEscape;
             voiceInput.EscapeModeJoinRequested -= ShowWaitingForEscape;
+            voiceInput.LocalEscapeHostRequested -= ShowWaitingForPythonEscape;
+            voiceInput.LocalEscapeJoinRequested -= ShowWaitingForPythonEscape;
         }
 
         voiceInput = foundVoiceInput;
@@ -125,6 +129,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.EscapeModeMenuRequested += OpenEscapeRoles;
             voiceInput.EscapeModeHostRequested += ShowWaitingForEscape;
             voiceInput.EscapeModeJoinRequested += ShowWaitingForEscape;
+            voiceInput.LocalEscapeHostRequested += ShowWaitingForPythonEscape;
+            voiceInput.LocalEscapeJoinRequested += ShowWaitingForPythonEscape;
         }
     }
 
@@ -256,6 +262,20 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (visible) uiController?.SetMainMenuVisible(false);
     }
 
+    private void ShowWaitingForPythonEscape()
+    {
+        page = MenuPage.Waiting;
+        visible = SceneManager.GetActiveScene().name == ModeMenuSceneName ||
+                  stateManager == null || stateManager.CurrentState == GameState.MainMenu;
+        if (visible) uiController?.SetMainMenuVisible(false);
+    }
+
+    public void ReturnToModesPage()
+    {
+        page = MenuPage.Modes;
+        visible = true;
+    }
+
     private void OnGUI()
     {
         bool inModeMenu = SceneManager.GetActiveScene().name == ModeMenuSceneName;
@@ -264,7 +284,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
         EnsureStyles();
         const float width = 620f;
-        const float height = 510f;
+        float height = page == MenuPage.EscapeRoles ? 650f : page == MenuPage.Waiting ? 570f : 510f;
         Rect panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         GUILayout.BeginArea(panel, GUIContent.none, panelStyle);
         GUILayout.Space(24f);
@@ -273,7 +293,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
         if (page == MenuPage.Modes)
         {
-            GUILayout.Label("Di «iniciar carrera» para la pista normal o «modo escape» para jugar en equipo.", bodyStyle);
+            GUILayout.Label("Di «iniciar carrera» para la pista normal. En Escape puedes usar Internet (Relay) o la misma Wi-Fi (Python).", bodyStyle);
             GUILayout.Space(18f);
             if (GUILayout.Button("CARRERA", buttonStyle, GUILayout.Height(64f)))
                 StartCareerMode();
@@ -294,7 +314,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         }
         else if (page == MenuPage.EscapeRoles)
         {
-            GUILayout.Label("Conductor: «activar modo escape». Hacker: «buscar modo escape». Buscar no crea salas ni cambia el rol hacker.", bodyStyle);
+            GUILayout.Label("INTERNET · Conductor: «activar modo escape». Hacker: «buscar modo escape». La búsqueda no crea salas.", bodyStyle);
             GUILayout.Space(18f);
             if (GUILayout.Button("CREAR SALA · CONDUCTOR", buttonStyle, GUILayout.Height(58f)))
             {
@@ -308,13 +328,46 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
                 sessionController?.SearchForDriverRoom();
             }
             GUILayout.Space(10f);
+            GUILayout.Label("MISMA WI-FI · Conductor: «activar modo escape local». Hacker: «buscar modo escape local».", bodyStyle);
+            if (GUILayout.Button("CREAR SERVIDOR LOCAL · CONDUCTOR", buttonStyle, GUILayout.Height(54f)))
+            {
+                page = MenuPage.Waiting;
+                pythonSessionController?.StartLocalServer();
+            }
+            GUILayout.Space(8f);
+            if (GUILayout.Button("BUSCAR SERVIDOR LOCAL · HACKER", buttonStyle, GUILayout.Height(54f)))
+            {
+                page = MenuPage.Waiting;
+                pythonSessionController?.JoinLocalServer();
+            }
+            GUILayout.Space(8f);
             if (GUILayout.Button("VOLVER", buttonStyle, GUILayout.Height(44f)))
                 page = MenuPage.Modes;
         }
         else
         {
-            GUILayout.Label(sessionController != null ? sessionController.Status : "Preparando Modo Escape...", bodyStyle);
-            if (sessionController != null && sessionController.SearchFailed)
+            bool localSessionVisible = pythonSessionController != null && pythonSessionController.ShouldShowStatus;
+            GUILayout.Label(localSessionVisible
+                ? pythonSessionController.Status
+                : sessionController != null ? sessionController.Status : "Preparando Modo Escape...", bodyStyle);
+            if (localSessionVisible)
+            {
+                GUILayout.Space(12f);
+                GUILayout.Label("Esta alternativa requiere que ambos equipos estén conectados a la misma Wi-Fi.", bodyStyle);
+                if (pythonSessionController.SearchFailed && GUILayout.Button(
+                    pythonSessionController.LastAttemptWasHost ? "REINTENTAR CREAR SERVIDOR LOCAL" : "REINTENTAR BÚSQUEDA LOCAL",
+                    buttonStyle, GUILayout.Height(48f)))
+                {
+                    if (pythonSessionController.LastAttemptWasHost) pythonSessionController.StartLocalServer();
+                    else pythonSessionController.JoinLocalServer();
+                }
+                if (GUILayout.Button("CERRAR ESCAPE LOCAL", buttonStyle, GUILayout.Height(48f)))
+                {
+                    pythonSessionController.ExitLocalSession();
+                    page = MenuPage.Modes;
+                }
+            }
+            if (!localSessionVisible && sessionController != null && sessionController.SearchFailed)
             {
                 GUILayout.Space(12f);
                 string failureText = sessionController.LastAttemptWasHost
@@ -330,8 +383,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
                     page = MenuPage.Waiting;
                 }
             }
-            else
-                GUILayout.Label("También puedes decir «salir modo escape» para cancelar.", bodyStyle);
+            else if (!localSessionVisible)
+                GUILayout.Label("También puedes decir «salir modo escape» o «salir modo escape local» para cancelar.", bodyStyle);
             if (EscapeModeHudFeed.Messages.Count > 0)
             {
                 GUILayout.Space(8f);
@@ -341,7 +394,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             GUILayout.Space(20f);
             if (GUILayout.Button("CANCELAR / VOLVER", buttonStyle, GUILayout.Height(50f)))
             {
-                if (sessionController != null) sessionController.ExitEscapeMode();
+                if (localSessionVisible) pythonSessionController.ExitLocalSession();
+                else if (sessionController != null) sessionController.ExitEscapeMode();
                 page = MenuPage.Modes;
             }
         }
@@ -413,6 +467,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;
             voiceInput.EscapeModeHostRequested -= ShowWaitingForEscape;
             voiceInput.EscapeModeJoinRequested -= ShowWaitingForEscape;
+            voiceInput.LocalEscapeHostRequested -= ShowWaitingForPythonEscape;
+            voiceInput.LocalEscapeJoinRequested -= ShowWaitingForPythonEscape;
         }
         if (instance == this) instance = null;
     }

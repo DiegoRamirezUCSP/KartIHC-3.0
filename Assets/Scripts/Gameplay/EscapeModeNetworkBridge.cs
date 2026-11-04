@@ -49,6 +49,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private double lastRoundTripMs;
     private string latencyTestStatus = "Esperando conexión de red";
     private int gyroDeviceId = -1;
+    private bool gyroConnected;
     private Vector3 neutralGravity;
     private bool hasNeutralGravity;
     private float droneAltitudeInput;
@@ -78,8 +79,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     public bool DroneAltitudeUsed { get; private set; }
     public bool DoorHackUsed { get; private set; }
     public string CurrentStatus => status;
+    public Transform ReconDroneTransform => droneController != null ? droneController.transform : null;
     public bool NetworkTestActive => hasLatencyPeer;
     public bool NetworkDiagnosticsEnabled => networkDiagnosticsEnabled;
+    public bool DroneGamepadConnected => Gamepad.current != null;
+    public bool DroneGyroscopeConnected => gyroConnected;
     public string NetworkTestStatus => latencyTestStatus;
     public double LastRoundTripMilliseconds => lastRoundTripMs;
     public double AverageRoundTripMilliseconds => averageRoundTripMs;
@@ -444,9 +448,16 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private Vector2 ReadDroneTilt()
     {
-        if (gyroDeviceId < 0 || !JoyShockLibraryNative.JslStillConnected(gyroDeviceId)) return Vector2.zero;
+        if (gyroDeviceId < 0) return Vector2.zero;
         try
         {
+            if (!JoyShockLibraryNative.JslStillConnected(gyroDeviceId))
+            {
+                gyroDeviceId = -1;
+                gyroConnected = false;
+                return Vector2.zero;
+            }
+
             JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(gyroDeviceId);
             if (!hasNeutralGravity)
             {
@@ -460,13 +471,14 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             if (Mathf.Abs(forward) < 0.08f) forward = 0f;
             return new Vector2(strafe, forward);
         }
-        catch (DllNotFoundException) { status = "Falta JoyShockLibrary.dll para el giroscopio"; }
-        catch (EntryPointNotFoundException) { status = "JoyShockLibrary no es compatible"; }
+        catch (DllNotFoundException) { gyroConnected = false; status = "Falta JoyShockLibrary.dll para el giroscopio"; }
+        catch (EntryPointNotFoundException) { gyroConnected = false; status = "JoyShockLibrary no es compatible"; }
         return Vector2.zero;
     }
 
     private void FindGyroDevice()
     {
+        gyroConnected = false;
         try
         {
             int count = JoyShockLibraryNative.JslConnectDevices();
@@ -478,6 +490,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
                 if (JoyShockLibraryNative.JslStillConnected(handle) && JoyShockLibraryNative.JslGetControllerType(handle) == JoyShockLibraryNative.ControllerTypeDualShock4)
                 {
                     gyroDeviceId = handle;
+                    gyroConnected = true;
                     JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(handle);
                     neutralGravity = new Vector3(motion.gravX, motion.gravY, motion.gravZ);
                     hasNeutralGravity = true;
@@ -523,6 +536,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
         int doorId = targetDoorIds[slot];
         DoorHackUsed = true;
+        if (PythonEscapeModeBridge.Instance != null)
+        {
+            PythonEscapeModeBridge.Instance.ToggleDoor(doorId);
+            return;
+        }
         bool open = !doorStates[doorId];
         RequestDoorState(doorId, open);
     }
@@ -576,6 +594,19 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         }
     }
 
+    public void ApplyExternalDoorState(int doorId, bool open)
+    {
+        ApplyDoorState(doorId, open, false);
+    }
+
+    public void ApplyExternalFinish()
+    {
+        if (HasWon) return;
+        HasWon = true;
+        status = "¡Victoria compartida! Conductor y hacker ganan.";
+        EscapeModeHudFeed.Publish(status);
+    }
+
     private void ReceiveDoorState(ulong senderClientId, FastBufferReader reader)
     {
         if (senderClientId != NetworkManager.ServerClientId) return;
@@ -587,6 +618,12 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     public void ReportDriverFinished()
     {
         if (!isHost || HasWon) return;
+        if (PythonEscapeModeBridge.Instance != null)
+        {
+            PythonEscapeModeBridge.Instance.ReportFinished();
+            ApplyExternalFinish();
+            return;
+        }
         HasWon = true;
         status = "¡Victoria compartida! Conductor y hacker ganan.";
         EscapeModeHudFeed.Publish(status);

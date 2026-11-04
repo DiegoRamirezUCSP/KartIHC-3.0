@@ -84,22 +84,33 @@ public class GameHUD : MonoBehaviour
             BuildStyles();
         }
 
+        EscapeModeNetworkBridge activeBridge = EscapeModeNetworkBridge.Instance;
+        bool hackerRole = activeBridge != null && activeBridge.IsHacker;
         float rowHeight = fontSize * 1.4f;
-        float height = rowHeight * 4f + 24f;
+        float height = rowHeight * (hackerRole ? 3f : 4f) + 24f;
 
         Rect area = GetCornerRect(panelWidth, height);
 
         GUILayout.BeginArea(area, boxStyle);
         GUILayout.Space(6);
 
-        DrawRow("MANDO", steeringInput != null && steeringInput.IsConnected, null);
-        DrawThrottleBrakeRow();
-        DrawMicRow();
-        DrawPowerUpRow();
+        if (hackerRole)
+        {
+            DrawRow("MANDO DRON", activeBridge.DroneGamepadConnected, null);
+            DrawRow("GIROSCOPIO", activeBridge.DroneGyroscopeConnected, null);
+            DrawMicRow();
+        }
+        else
+        {
+            DrawRow("MANDO", steeringInput != null && steeringInput.IsConnected, null);
+            DrawThrottleBrakeRow();
+            DrawMicRow();
+            DrawPowerUpRow();
+        }
 
         GUILayout.EndArea();
 
-        if (showLegCameraPanel && legInput != null)
+        if (showLegCameraPanel && legInput != null && !hackerRole)
         {
             DrawLegCameraPanel();
         }
@@ -110,9 +121,13 @@ public class GameHUD : MonoBehaviour
     private void DrawEscapeEventHistory()
     {
         EscapeModeSessionController session = EscapeModeSessionController.Instance;
+        PythonEscapeSessionController pythonSession = PythonEscapeSessionController.Instance;
         EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+        PythonEscapeModeBridge pythonBridge = PythonEscapeModeBridge.Instance;
         bool isEscapeScene = SceneManager.GetActiveScene().name == "EscapeCourse";
-        if (!isEscapeScene && (session == null || !session.ShouldShowStatus)) return;
+        bool sessionVisible = (session != null && session.ShouldShowStatus) ||
+                              (pythonSession != null && pythonSession.ShouldShowStatus);
+        if (!isEscapeScene && !sessionVisible) return;
 
         if (escapeTextStyle == null)
         {
@@ -127,21 +142,27 @@ public class GameHUD : MonoBehaviour
 
         float width = Mathf.Min(EscapePanelWidth, Screen.width - margin * 2f);
         bool showDroneTargets = bridge != null && bridge.IsHacker;
-        bool showNetworkTest = bridge != null && bridge.NetworkDiagnosticsEnabled;
+        bool showNetworkTest = pythonBridge != null || (bridge != null && bridge.NetworkDiagnosticsEnabled);
         float height = 55f + EscapeModeHudFeed.Messages.Count * 24f +
                        (showDroneTargets ? 135f : 0f) + (showNetworkTest ? 58f : 0f);
         Rect area = new Rect(Screen.width - width - margin, margin, width, height);
         GUI.Box(area, "MODO ESCAPE · ESTADO Y MENSAJES");
         GUILayout.BeginArea(new Rect(area.x + 10f, area.y + 24f, area.width - 20f, area.height - 28f));
-        string status = bridge != null ? bridge.CurrentStatus : session != null ? session.Status : "Preparando Escape...";
+        string status = pythonSession != null && pythonSession.ShouldShowStatus
+            ? pythonSession.Status
+            : bridge != null ? bridge.CurrentStatus : session != null ? session.Status : "Preparando Escape...";
         GUILayout.Label($"<b>{status}</b>", escapeTextStyle);
         foreach (string message in EscapeModeHudFeed.Messages)
             GUILayout.Label("• " + message, escapeTextStyle);
         if (showNetworkTest)
         {
             GUILayout.Space(5f);
-            GUILayout.Label("PRUEBA DE RED · " + bridge.NetworkTestStatus, escapeTextStyle);
-            GUILayout.Label($"Sondas: {bridge.LatencyProbesSent} enviadas · {bridge.LatencyRepliesReceived} respuestas · {bridge.LatencyProbesLost} perdidas",
+            string networkStatus = pythonBridge != null ? pythonBridge.NetworkTestStatus : bridge.NetworkTestStatus;
+            int sent = pythonBridge != null ? pythonBridge.PingsSent : bridge.LatencyProbesSent;
+            int received = pythonBridge != null ? pythonBridge.PongsReceived : bridge.LatencyRepliesReceived;
+            int lost = pythonBridge != null ? pythonBridge.PingsLost : bridge.LatencyProbesLost;
+            GUILayout.Label("PRUEBA DE RED · " + networkStatus, escapeTextStyle);
+            GUILayout.Label($"Sondas: {sent} enviadas · {received} respuestas · {lost} sin respuesta",
                 escapeTextStyle);
         }
         if (showDroneTargets)

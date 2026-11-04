@@ -84,6 +84,11 @@ public class KartItemInventory : MonoBehaviour
 
     private void OnGUI()
     {
+        if (EscapeModeNetworkBridge.Instance != null && EscapeModeNetworkBridge.Instance.IsHacker)
+        {
+            return;
+        }
+
         if (!drawOnScreen)
         {
             return;

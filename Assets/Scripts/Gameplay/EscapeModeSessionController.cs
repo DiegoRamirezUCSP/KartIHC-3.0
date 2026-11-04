@@ -48,6 +48,7 @@ public sealed class EscapeModeSessionController : MonoBehaviour
 
     public static EscapeModeSessionController Instance => instance;
     public bool IsEscapeSessionActive => currentSession != null;
+    public bool HasActiveOrOngoingSession => currentSession != null || operationRunning || searching;
     public bool IsHostDriver => currentSession != null && hostRole;
     public string Status => status;
     public string SessionCode => sessionCode;
@@ -145,6 +146,13 @@ public sealed class EscapeModeSessionController : MonoBehaviour
 
     public async void CreateDriverRoom()
     {
+        if (PythonEscapeSessionController.Instance != null && PythonEscapeSessionController.Instance.IsActive)
+        {
+            status = "Ya hay una sesión Escape local activa. Di «salir modo escape local» primero.";
+            EscapeModeHudFeed.Publish(status);
+            return;
+        }
+        PythonEscapeSessionController.Instance?.ClearFailure();
         if (isExiting || operationRunning || currentSession != null) return;
         lastAttemptWasHost = true;
         operationRunning = true;
@@ -211,6 +219,13 @@ public sealed class EscapeModeSessionController : MonoBehaviour
 
     public async void SearchForDriverRoom()
     {
+        if (PythonEscapeSessionController.Instance != null && PythonEscapeSessionController.Instance.IsActive)
+        {
+            status = "Ya hay una sesión Escape local activa. Di «salir modo escape local» primero.";
+            EscapeModeHudFeed.Publish(status);
+            return;
+        }
+        PythonEscapeSessionController.Instance?.ClearFailure();
         if (isExiting || operationRunning || searching) return;
         if (currentSession != null)
         {
@@ -497,6 +512,12 @@ public sealed class EscapeModeSessionController : MonoBehaviour
 
     public async void ExitEscapeMode()
     {
+        if (PythonEscapeSessionController.Instance != null &&
+            (PythonEscapeSessionController.Instance.IsActive || PythonEscapeSessionController.Instance.SearchFailed))
+        {
+            PythonEscapeSessionController.Instance.ExitLocalSession();
+            return;
+        }
         if (isExiting) return;
         isExiting = true;
         requestGeneration++;

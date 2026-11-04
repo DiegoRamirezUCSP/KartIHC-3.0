@@ -62,6 +62,9 @@ public class VoicePowerUpInput : MonoBehaviour
     [SerializeField] private string[] createEscapeModeWords = { "activar modo escape" };
     [SerializeField] private string[] findEscapeModeWords = { "buscar modo escape" };
     [SerializeField] private string[] leaveEscapeModeWords = { "salir modo escape" };
+    [SerializeField] private string[] createLocalEscapeWords = { "activar modo escape local", "activar escape local", "crear escape local" };
+    [SerializeField] private string[] findLocalEscapeWords = { "buscar modo escape local", "buscar escape local", "unirse escape local" };
+    [SerializeField] private string[] leaveLocalEscapeWords = { "salir modo escape local", "salir escape local" };
 
     [Header("Camara de piernas")]
     [SerializeField] private string[] activateLegCameraWords = { "activar camara", "encender la camara" };
@@ -81,6 +84,9 @@ public class VoicePowerUpInput : MonoBehaviour
     public event Action EscapeModeJoinRequested;
     public event Action EscapeModeMenuRequested;
     public event Action EscapeModeExitRequested;
+    public event Action LocalEscapeHostRequested;
+    public event Action LocalEscapeJoinRequested;
+    public event Action LocalEscapeExitRequested;
     public event Action ModeMenuBackRequested;
     public event Action LegCameraActivateRequested;
     public event Action LegCameraChangeRequested;
@@ -143,6 +149,9 @@ public class VoicePowerUpInput : MonoBehaviour
         RegisterCommand(openEscapeMenuWords, RequestEscapeModeMenu);
         RegisterCommand(backToModeMenuWords, RequestModeMenuBack);
         RegisterCommand(leaveEscapeModeWords, RequestEscapeModeExit);
+        RegisterCommand(createLocalEscapeWords, RequestLocalEscapeHost);
+        RegisterCommand(findLocalEscapeWords, RequestLocalEscapeJoin);
+        RegisterCommand(leaveLocalEscapeWords, RequestLocalEscapeExit);
         RegisterCommand(activateLegCameraWords, RequestLegCameraActivate);
         RegisterCommand(changeLegCameraWords, RequestLegCameraChange);
         RegisterCommand(calibrateLegCameraWords, RequestLegCameraCalibrate);
@@ -314,6 +323,27 @@ public class VoicePowerUpInput : MonoBehaviour
         ActivationCount++;
         Debug.Log("Crear partida cooperativa Escape solicitado por voz.");
         EscapeModeHostRequested?.Invoke();
+    }
+
+    private void RequestLocalEscapeHost()
+    {
+        LastCommand = "activar escape local";
+        ActivationCount++;
+        LocalEscapeHostRequested?.Invoke();
+    }
+
+    private void RequestLocalEscapeJoin()
+    {
+        LastCommand = "buscar escape local";
+        ActivationCount++;
+        LocalEscapeJoinRequested?.Invoke();
+    }
+
+    private void RequestLocalEscapeExit()
+    {
+        LastCommand = "salir escape local";
+        ActivationCount++;
+        LocalEscapeExitRequested?.Invoke();
     }
 
     private void RequestEscapeModeMenu()

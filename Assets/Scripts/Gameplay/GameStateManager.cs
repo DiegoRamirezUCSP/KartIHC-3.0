@@ -217,7 +217,11 @@ namespace KartIHC.Gameplay
 
             if (kartController != null)
             {
-                kartController.SetInputEnabled(newState == GameState.Playing || (newState == GameState.Tutorial && CurrentTutorialId != 4));
+                bool hackerControlsDrone = EscapeModeNetworkBridge.Instance != null &&
+                                           EscapeModeNetworkBridge.Instance.IsHacker;
+                bool stateAllowsKartInput = newState == GameState.Playing ||
+                                            (newState == GameState.Tutorial && CurrentTutorialId != 4);
+                kartController.SetInputEnabled(stateAllowsKartInput && !hackerControlsDrone);
             }
 
             OnStateChanged?.Invoke(newState);

@@ -95,11 +95,16 @@ namespace KartIHC.UI
                 };
             }
 
-            string line =
-                $"{Caption("MANDO")} {Status(steeringInput != null && steeringInput.IsConnected)}    " +
-                $"{Caption("PIERNAS")} {Status(legInput != null && legInput.IsConnected)}    " +
-                $"{Caption("VOZ")} {Status(voiceInput != null && voiceInput.IsListening)}    " +
-                $"{Caption("POWER")} {PowerText()}";
+            EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+            bool hackerRole = bridge != null && bridge.IsHacker;
+            string line = hackerRole
+                ? $"{Caption("MANDO DRON")} {Status(bridge.DroneGamepadConnected)}    " +
+                  $"{Caption("GIROSCOPIO")} {Status(bridge.DroneGyroscopeConnected)}    " +
+                  $"{Caption("VOZ")} {Status(voiceInput != null && voiceInput.IsListening)}"
+                : $"{Caption("MANDO")} {Status(steeringInput != null && steeringInput.IsConnected)}    " +
+                  $"{Caption("PIERNAS")} {Status(legInput != null && legInput.IsConnected)}    " +
+                  $"{Caption("VOZ")} {Status(voiceInput != null && voiceInput.IsListening)}    " +
+                  $"{Caption("POWER")} {PowerText()}";
 
             Vector2 size = labelStyle.CalcSize(new GUIContent(line));
             float width = size.x + KartUIStyle.S(32f);

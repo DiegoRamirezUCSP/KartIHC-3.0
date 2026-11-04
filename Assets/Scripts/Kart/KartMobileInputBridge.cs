@@ -86,7 +86,7 @@ public class KartMobileInputBridge : MonoBehaviour
 
     private void FixedUpdate()
     {
-        if (kartController == null)
+        if (kartController == null || (EscapeModeNetworkBridge.Instance != null && EscapeModeNetworkBridge.Instance.IsHacker))
         {
             return;
         }
@@ -175,7 +175,7 @@ public class KartMobileInputBridge : MonoBehaviour
 
     private void UsePowerUp(string powerUpId)
     {
-        if (kartController == null)
+        if (kartController == null || (EscapeModeNetworkBridge.Instance != null && EscapeModeNetworkBridge.Instance.IsHacker))
         {
             return;
         }
