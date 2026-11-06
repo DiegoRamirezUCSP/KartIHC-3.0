@@ -8435,7 +8435,7 @@ Transform:
   m_GameObject: {fileID: 799418697}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: -0.953717, z: -0, w: -0.3007058}
-  m_LocalPosition: {x: -6.2, y: 0, z: 0}
+  m_LocalPosition: {x: -8.58, y: 0.19, z: 11.79}
   m_LocalScale: {x: 12.4, y: 2.4, z: 0.55}
   m_ConstrainProportionsScale: 0
   m_Children: []
@@ -10036,13 +10036,13 @@ Transform:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 943826853}
   serializedVersion: 2
-  m_LocalRotation: {x: -0, y: -0.7372773, z: -0, w: 0.6755902}
-  m_LocalPosition: {x: -6.2, y: 0, z: 0}
+  m_LocalRotation: {x: -0, y: -0.08929145, z: -0, w: 0.99600554}
+  m_LocalPosition: {x: -6.4, y: 0, z: 3.5}
   m_LocalScale: {x: 12.4, y: 2.4, z: 0.55}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 2031506614}
-  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: -10.246, z: 0}
 --- !u!23 &943826855
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -11334,6 +11334,17 @@ MonoBehaviour:
   - buscar modo escape
   leaveEscapeModeWords:
   - salir modo escape
+  createLocalEscapeWords:
+  - activar modo escape local
+  - activar escape local
+  - crear escape local
+  findLocalEscapeWords:
+  - buscar modo escape local
+  - buscar escape local
+  - unirse escape local
+  leaveLocalEscapeWords:
+  - salir modo escape local
+  - salir escape local
   activateLegCameraWords:
   - activar camara
   - encender la camara

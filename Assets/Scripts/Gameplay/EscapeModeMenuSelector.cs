@@ -142,24 +142,38 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
     private void HandleTutorialVoice(int tutorialId)
     {
+        if (tutorialId == 4)
+        {
+            StartHackerMode(tutorial: true);
+            return;
+        }
         if (SceneManager.GetActiveScene().name != ModeMenuSceneName) return;
         tutorialAfterSceneLoad = tutorialId;
-        hackerTutorialAfterSceneLoad = tutorialId == 4;
+        hackerTutorialAfterSceneLoad = false;
         startRaceAfterSceneLoad = false;
         visible = false;
         uiController?.SetMainMenuVisible(false);
-        SceneManager.LoadScene(tutorialId == 4 ? EscapeSceneName : CareerSceneName, LoadSceneMode.Single);
+        SceneManager.LoadScene(CareerSceneName, LoadSceneMode.Single);
     }
 
     private void HandleHackerPracticeVoice()
     {
-        if (SceneManager.GetActiveScene().name != ModeMenuSceneName) return;
-        hackerPracticeAfterSceneLoad = true;
-        hackerTutorialAfterSceneLoad = false;
+        StartHackerMode(tutorial: false);
+    }
+
+    private void StartHackerMode(bool tutorial)
+    {
+        hackerPracticeAfterSceneLoad = !tutorial;
+        hackerTutorialAfterSceneLoad = tutorial;
         tutorialAfterSceneLoad = 0;
         startRaceAfterSceneLoad = false;
         visible = false;
-        SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+        uiController?.SetMainMenuVisible(false);
+
+        if (SceneManager.GetActiveScene().name == EscapeSceneName)
+            StartCoroutine(BeginSelectedCareerMode());
+        else
+            SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
     }
 
     private void HandleModeMenuBackVoice()
@@ -216,7 +230,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         else if (hackerTutorialAfterSceneLoad)
         {
             EscapeCourseBuilder.Build();
-            EscapeModeNetworkBridge.StartForRole(false);
+            EscapeModeNetworkBridge.StartForRole(false, true);
             stateManager?.BeginTutorial(4);
         }
         else if (tutorialAfterSceneLoad > 0)

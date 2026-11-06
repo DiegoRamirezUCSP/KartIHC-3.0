@@ -181,7 +181,7 @@ namespace KartIHC.Gameplay
                     if (tutorialId == 4)
                     {
                         title = "TUTORIAL 4: HACKER";
-                        instruction = "Conecta un mando PS4. Inclínalo para volar el dron; usa la palanca izquierda arriba/abajo para cambiar altura. L2/R2 controlan el zoom. Mantén □ △ ○ o × para hackear el objetivo cercano asignado a ese botón. Di \"cancelar tutorial\" para salir.";
+                        instruction = "Conecta un mando PS4. Inclínalo adelante/atrás para volar y a los lados para desplazarte; la vista se inclina al volar. Si el giroscopio no responde, usa la palanca derecha. Palanca izquierda: arriba/abajo altura, izquierda/derecha giro. Pulsa Options con el mando quieto para recalibrar. L2/R2: zoom. Mantén □ cerca de la puerta más próxima (máx. 7 m) y repite las 6 direcciones de la cruceta antes de 10 s. Si fallas, el dron se bloquea 15 s.";
                     }
                     else
                     {

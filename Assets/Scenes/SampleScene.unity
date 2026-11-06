@@ -4149,6 +4149,9 @@ MonoBehaviour:
   fontSize: 30
   panelWidth: 260
   margin: 16
+  showLegCameraPanel: 1
+  cameraPanelWidth: 260
+  cameraPanelHeight: 190
 --- !u!4 &142922574
 Transform:
   m_ObjectHideFlags: 0
@@ -22115,15 +22118,15 @@ PrefabInstance:
       objectReference: {fileID: 0}
     - target: {fileID: 8744109338204816658, guid: 0d8efd4af271afc4d96cbdb4c95ece39, type: 3}
       propertyPath: m_LocalPosition.x
-      value: 8.701813
+      value: 9
       objectReference: {fileID: 0}
     - target: {fileID: 8744109338204816658, guid: 0d8efd4af271afc4d96cbdb4c95ece39, type: 3}
       propertyPath: m_LocalPosition.y
-      value: 2.999999
+      value: 0.83
       objectReference: {fileID: 0}
     - target: {fileID: 8744109338204816658, guid: 0d8efd4af271afc4d96cbdb4c95ece39, type: 3}
       propertyPath: m_LocalPosition.z
-      value: -28.501932
+      value: -31.56
       objectReference: {fileID: 0}
     - target: {fileID: 8744109338204816658, guid: 0d8efd4af271afc4d96cbdb4c95ece39, type: 3}
       propertyPath: m_LocalRotation.w
@@ -38678,6 +38681,9 @@ MonoBehaviour:
   - tutorial dos
   tutorial3Words:
   - tutorial tres
+  tutorial4Words:
+  - tutorial cuatro
+  - tutorial hacker
   cancelTutorialWords:
   - cancelar
   - salir
@@ -38713,6 +38719,17 @@ MonoBehaviour:
   - buscar modo escape
   leaveEscapeModeWords:
   - salir modo escape
+  createLocalEscapeWords:
+  - activar modo escape local
+  - activar escape local
+  - crear escape local
+  findLocalEscapeWords:
+  - buscar modo escape local
+  - buscar escape local
+  - unirse escape local
+  leaveLocalEscapeWords:
+  - salir modo escape local
+  - salir escape local
   activateLegCameraWords:
   - activar camara
   - encender la camara
@@ -77069,6 +77086,14 @@ MonoBehaviour:
   port: 5555
   timeoutSeconds: 1
   showDiagnostics: 1
+  pythonExecutable: python
+  scriptRelativePath: Tools/LegCameraControl/leg_camera_control.py
+  previewPort: 5556
+  controlPort: 5557
+  voiceInput: {fileID: 0}
+  activateCameraKey: 99
+  changeCameraKey: 100
+  calibrateCameraKey: 101
 --- !u!4 &2089312089
 Transform:
   m_ObjectHideFlags: 0

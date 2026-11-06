@@ -23,6 +23,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const string LatencyProbeMessage = "KartIHC.Escape.LatencyProbe";
     private const string LatencyReplyMessage = "KartIHC.Escape.LatencyReply";
     private const float KartSendInterval = 1f / 20f;
+    private const float DroneTiltDeadzone = 0.12f;
+    private const float DoorHackRangeMeters = 7f;
+    private const int HackPatternLength = 6;
+    private const float HackTimeLimitSeconds = 10f;
+    private const float HackFailureLockSeconds = 15f;
     private const double LatencyProbeIntervalSeconds = 1.0;
     private const double LatencyProbeTimeoutSeconds = 3.0;
 
@@ -55,7 +60,14 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private float droneAltitudeInput;
     private float droneHorizontalInput;
     private float droneForwardInput;
+    private float droneYawInput;
     private float nextTargetRefresh;
+    private readonly int[] hackPattern = new int[HackPatternLength];
+    private int hackDoorId = -1;
+    private int hackPatternProgress;
+    private float hackDeadline;
+    private float droneLockedUntil;
+    private bool hackMinigameActive;
     private readonly int[] targetDoorIds = { -1, -1, -1, -1 };
     private readonly float[] targetButtonHoldTimes = new float[4];
     private readonly bool[] targetButtonHoldHandled = new bool[4];
@@ -78,6 +90,13 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     public bool DroneHasMoved { get; private set; }
     public bool DroneAltitudeUsed { get; private set; }
     public bool DoorHackUsed { get; private set; }
+    public bool HackMinigameActive => hackMinigameActive;
+    public int HackMinigameDoorId => hackDoorId;
+    public int HackMinigameProgress => hackPatternProgress;
+    public int HackMinigameDirectionAt(int index) => index >= 0 && index < hackPattern.Length ? hackPattern[index] : -1;
+    public float HackMinigameSecondsRemaining => hackMinigameActive ? Mathf.Max(0f, hackDeadline - Time.unscaledTime) : 0f;
+    public float DroneLockSecondsRemaining => Mathf.Max(0f, droneLockedUntil - Time.unscaledTime);
+    public bool DroneLocked => DroneLockSecondsRemaining > 0f;
     public string CurrentStatus => status;
     public Transform ReconDroneTransform => droneController != null ? droneController.transform : null;
     public bool NetworkTestActive => hasLatencyPeer;
@@ -124,6 +143,14 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void Configure(bool hostRole, bool practice)
     {
+        DroneHasMoved = false;
+        DroneAltitudeUsed = false;
+        ZoomUsed = false;
+        DoorHackUsed = false;
+        hackMinigameActive = false;
+        hackDoorId = -1;
+        hackPatternProgress = 0;
+        droneLockedUntil = 0f;
         isHost = hostRole;
         isHacker = !hostRole;
         networkDiagnosticsEnabled = !practice;
@@ -187,7 +214,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void RegisterMessagesWhenReady()
     {
-        if (handlersRegistered || networkManager == null || !networkManager.IsListening || networkManager.CustomMessagingManager == null)
+        if (!networked || handlersRegistered || networkManager == null || !networkManager.IsListening || networkManager.CustomMessagingManager == null)
             return;
 
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(KartMessage, ReceiveKartState);
@@ -355,12 +382,37 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             RefreshHackerTargets();
         }
 
+        if (hackMinigameActive && Time.unscaledTime >= hackDeadline)
+        {
+            FailHackMinigame("Se agotó el tiempo");
+            return;
+        }
+
         Gamepad pad = Gamepad.current;
-        if (pad == null) return;
+        if (pad == null)
+        {
+            status = "Conecta el mando PS4 para controlar el dron";
+            return;
+        }
+        if (DroneLocked)
+        {
+            UpdateDroneMotion(pad, allowMovement: false);
+            return;
+        }
+        if (droneLockedUntil > 0f)
+        {
+            droneLockedUntil = 0f;
+            status = "Dron desbloqueado";
+            EscapeModeHudFeed.Publish(status);
+        }
+        if (hackMinigameActive)
+        {
+            UpdateHackMinigame(pad);
+            return;
+        }
+        // Square (West on a DualShock layout) is reserved for door hacking.
+        // The other face buttons remain available for future hacker actions.
         UpdateTargetButton(pad.buttonWest, 0);
-        UpdateTargetButton(pad.buttonNorth, 1);
-        UpdateTargetButton(pad.buttonEast, 2);
-        UpdateTargetButton(pad.buttonSouth, 3);
         UpdateDroneMotion(pad);
     }
 
@@ -388,10 +440,94 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         }
     }
 
+    private void StartHackMinigame(int doorId)
+    {
+        if (DroneLocked || hackMinigameActive) return;
+        hackDoorId = doorId;
+        hackPatternProgress = 0;
+        for (int i = 0; i < hackPattern.Length; i++)
+            hackPattern[i] = UnityEngine.Random.Range(0, 4);
+        hackDeadline = Time.unscaledTime + HackTimeLimitSeconds;
+        hackMinigameActive = true;
+        status = $"Hackeo de puerta {doorId + 1}: repite la secuencia con la cruceta";
+        EscapeModeHudFeed.Publish(status);
+    }
+
+    private void UpdateHackMinigame(Gamepad pad)
+    {
+        if (Time.unscaledTime >= hackDeadline)
+        {
+            FailHackMinigame("Se agotó el tiempo");
+            return;
+        }
+
+        int direction = -1;
+        int pressedCount = 0;
+        ReadDpadPress(pad.dpad.up, 0, ref direction, ref pressedCount);
+        ReadDpadPress(pad.dpad.down, 1, ref direction, ref pressedCount);
+        ReadDpadPress(pad.dpad.left, 2, ref direction, ref pressedCount);
+        ReadDpadPress(pad.dpad.right, 3, ref direction, ref pressedCount);
+        if (pressedCount == 0) return;
+        if (pressedCount > 1 || direction != hackPattern[hackPatternProgress])
+        {
+            FailHackMinigame("Patrón incorrecto");
+            return;
+        }
+
+        hackPatternProgress++;
+        if (hackPatternProgress >= HackPatternLength)
+            CompleteHackMinigame();
+    }
+
+    private static void ReadDpadPress(ButtonControl button, int direction, ref int selectedDirection, ref int pressedCount)
+    {
+        if (!button.wasPressedThisFrame) return;
+        selectedDirection = direction;
+        pressedCount++;
+    }
+
+    private void CompleteHackMinigame()
+    {
+        int doorId = hackDoorId;
+        hackMinigameActive = false;
+        hackDoorId = -1;
+        hackPatternProgress = HackPatternLength;
+        DoorHackUsed = true;
+
+        if (PythonEscapeModeBridge.Instance != null)
+        {
+            PythonEscapeModeBridge.Instance.ToggleDoor(doorId);
+        }
+        else if (doorId >= 0 && doorId < doorStates.Length)
+        {
+            RequestDoorState(doorId, !doorStates[doorId]);
+        }
+
+        status = "Hackeo completado";
+        EscapeModeHudFeed.Publish(status);
+        RefreshHackerTargets();
+    }
+
+    private void FailHackMinigame(string reason)
+    {
+        hackMinigameActive = false;
+        hackDoorId = -1;
+        hackPatternProgress = 0;
+        droneLockedUntil = Time.unscaledTime + HackFailureLockSeconds;
+        status = $"{reason}: dron bloqueado por {HackFailureLockSeconds:0} s";
+        EscapeModeHudFeed.Publish(status);
+    }
+
     private void CreateReconDrone()
     {
         if (savedGameplayCamera == null) savedGameplayCamera = Camera.main;
         if (savedGameplayCamera != null) savedGameplayCamera.enabled = false;
+        if (droneController != null)
+        {
+            Destroy(droneController.gameObject);
+            droneController = null;
+            droneCamera = null;
+        }
 
         var drone = new GameObject("EscapeReconDrone");
         Transform spawn = GameObject.Find("EscapeDroneSpawn")?.transform;
@@ -407,7 +543,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         droneController.radius = 0.35f;
         droneController.center = Vector3.zero;
         droneController.skinWidth = 0.04f;
-        droneCamera = drone.AddComponent<Camera>();
+        GameObject cameraObject = new GameObject("DroneCamera");
+        cameraObject.transform.SetParent(drone.transform, false);
+        droneCamera = cameraObject.AddComponent<Camera>();
         droneCamera.fieldOfView = 60f;
         droneCamera.nearClipPlane = 0.1f;
         droneCamera.enabled = true;
@@ -415,47 +553,97 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         EscapeModeHudFeed.Publish(status);
     }
 
-    private void UpdateDroneMotion(Gamepad pad)
+    private void UpdateDroneMotion(Gamepad pad, bool allowMovement = true)
     {
         if (droneController == null || droneCamera == null) return;
 
+        if (pad.startButton.wasPressedThisFrame)
+            CalibrateDroneGyroscope();
+
         if (gyroDeviceId < 0) FindGyroDevice();
-        Vector2 tilt = ReadDroneTilt();
+        Vector2 tilt = ReadDroneTilt(pad);
         droneHorizontalInput = Mathf.Lerp(droneHorizontalInput, tilt.x, Time.unscaledDeltaTime * 7f);
         droneForwardInput = Mathf.Lerp(droneForwardInput, tilt.y, Time.unscaledDeltaTime * 7f);
         droneAltitudeInput = pad.leftStick.y.ReadValue();
-        if (Mathf.Abs(droneAltitudeInput) < 0.15f)
-            droneAltitudeInput = pad.rightStick.y.ReadValue();
+        if (Mathf.Abs(droneAltitudeInput) < 0.15f) droneAltitudeInput = 0f;
+        droneYawInput = pad.leftStick.x.ReadValue();
+        if (Mathf.Abs(droneYawInput) < 0.15f) droneYawInput = 0f;
+        if (!allowMovement)
+        {
+            droneAltitudeInput = 0f;
+            droneHorizontalInput = 0f;
+            droneForwardInput = 0f;
+            droneYawInput = 0f;
+        }
 
-        Vector3 horizontalMovement = new Vector3(droneHorizontalInput, 0f, droneForwardInput);
+        // Tilt controls translation relative to the drone's heading. Turning
+        // the controller around its vertical axis cannot move the drone.
+        Vector3 horizontalMovement = droneController.transform.right * droneHorizontalInput +
+                                    droneController.transform.forward * droneForwardInput;
         Vector3 movement = horizontalMovement * 9f + Vector3.up * (droneAltitudeInput * 5f);
         droneController.Move(movement * Time.unscaledDeltaTime);
+        droneController.transform.Rotate(Vector3.up, droneYawInput * 100f * Time.unscaledDeltaTime, Space.World);
 
-        if (tilt.sqrMagnitude > 0.025f) DroneHasMoved = true;
+        // Give the pilot helicopter-like flight feedback without tilting the
+        // CharacterController or changing the movement axes.
+        Quaternion cameraTilt = Quaternion.Euler(droneForwardInput * 14f, 0f, -droneHorizontalInput * 11f);
+        droneCamera.transform.localRotation = Quaternion.Slerp(
+            droneCamera.transform.localRotation, cameraTilt, Time.unscaledDeltaTime * 5f);
+
+        if (horizontalMovement.sqrMagnitude > 0.025f) DroneHasMoved = true;
         if (Mathf.Abs(droneAltitudeInput) > 0.2f) DroneAltitudeUsed = true;
-
-        if (horizontalMovement.sqrMagnitude > 0.04f)
-        {
-            Vector3 viewDirection = horizontalMovement.normalized + Vector3.down * 0.28f;
-            Quaternion targetRotation = Quaternion.LookRotation(viewDirection, Vector3.up);
-            droneController.transform.rotation = Quaternion.Slerp(droneController.transform.rotation, targetRotation, Time.unscaledDeltaTime * 2f);
-        }
 
         float zoom = pad.rightTrigger.ReadValue() - pad.leftTrigger.ReadValue();
         if (Mathf.Abs(zoom) > 0.15f) ZoomUsed = true;
         droneCamera.fieldOfView = Mathf.Clamp(droneCamera.fieldOfView - zoom * 55f * Time.unscaledDeltaTime, 25f, 85f);
     }
 
-    private Vector2 ReadDroneTilt()
+    private void CalibrateDroneGyroscope()
     {
-        if (gyroDeviceId < 0) return Vector2.zero;
+        if (gyroDeviceId < 0) FindGyroDevice();
+        if (gyroDeviceId < 0)
+        {
+            status = "No se detectó giroscopio; la palanca derecha sigue controlando el vuelo";
+            EscapeModeHudFeed.Publish(status);
+            return;
+        }
+
         try
         {
             if (!JoyShockLibraryNative.JslStillConnected(gyroDeviceId))
             {
                 gyroDeviceId = -1;
                 gyroConnected = false;
-                return Vector2.zero;
+                hasNeutralGravity = false;
+                status = "Mando desconectado; no se pudo recalibrar";
+            }
+            else
+            {
+                JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(gyroDeviceId);
+                neutralGravity = new Vector3(motion.gravX, motion.gravY, motion.gravZ);
+                hasNeutralGravity = true;
+                droneHorizontalInput = 0f;
+                droneForwardInput = 0f;
+                status = "Orientación neutra del dron recalibrada";
+            }
+        }
+        catch (DllNotFoundException) { status = "Falta JoyShockLibrary; usa la palanca derecha"; }
+        catch (EntryPointNotFoundException) { status = "JoyShockLibrary no compatible; usa la palanca derecha"; }
+        EscapeModeHudFeed.Publish(status);
+    }
+
+    private Vector2 ReadDroneTilt(Gamepad pad)
+    {
+        // If JoyShockLibrary cannot read the controller IMU, keep drone flight
+        // available through the right stick. The left stick remains altitude.
+        if (gyroDeviceId < 0) return pad.rightStick.ReadValue();
+        try
+        {
+            if (!JoyShockLibraryNative.JslStillConnected(gyroDeviceId))
+            {
+                gyroDeviceId = -1;
+                gyroConnected = false;
+                return pad.rightStick.ReadValue();
             }
 
             JoyShockLibraryNative.MotionState motion = JoyShockLibraryNative.JslGetMotionState(gyroDeviceId);
@@ -466,14 +654,23 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             }
 
             float strafe = Mathf.Clamp((motion.gravX - neutralGravity.x) * 2.2f, -1f, 1f);
-            float forward = Mathf.Clamp((motion.gravY - neutralGravity.y) * 2.2f, -1f, 1f);
-            if (Mathf.Abs(strafe) < 0.08f) strafe = 0f;
-            if (Mathf.Abs(forward) < 0.08f) forward = 0f;
+            // Local gravity rests mostly on the Y axis; pitch is therefore
+            // read from Z so forward and backward produce opposite values.
+            float forward = Mathf.Clamp((neutralGravity.z - motion.gravZ) * 2.2f, -1f, 1f);
+            strafe = ApplyDroneTiltDeadzone(strafe);
+            forward = ApplyDroneTiltDeadzone(forward);
             return new Vector2(strafe, forward);
         }
-        catch (DllNotFoundException) { gyroConnected = false; status = "Falta JoyShockLibrary.dll para el giroscopio"; }
-        catch (EntryPointNotFoundException) { gyroConnected = false; status = "JoyShockLibrary no es compatible"; }
-        return Vector2.zero;
+        catch (DllNotFoundException) { gyroConnected = false; status = "Sin JoyShockLibrary: usa la palanca derecha para volar"; }
+        catch (EntryPointNotFoundException) { gyroConnected = false; status = "JoyShockLibrary no compatible: usa la palanca derecha"; }
+        return pad.rightStick.ReadValue();
+    }
+
+    private static float ApplyDroneTiltDeadzone(float value)
+    {
+        float magnitude = Mathf.Abs(value);
+        if (magnitude <= DroneTiltDeadzone) return 0f;
+        return Mathf.Sign(value) * ((magnitude - DroneTiltDeadzone) / (1f - DroneTiltDeadzone));
     }
 
     private void FindGyroDevice()
@@ -487,7 +684,10 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             JoyShockLibraryNative.JslGetConnectedDeviceHandles(handles, handles.Length);
             foreach (int handle in handles)
             {
-                if (JoyShockLibraryNative.JslStillConnected(handle) && JoyShockLibraryNative.JslGetControllerType(handle) == JoyShockLibraryNative.ControllerTypeDualShock4)
+                if (!JoyShockLibraryNative.JslStillConnected(handle)) continue;
+                int controllerType = JoyShockLibraryNative.JslGetControllerType(handle);
+                if (controllerType == JoyShockLibraryNative.ControllerTypeDualShock4 ||
+                    controllerType == JoyShockLibraryNative.ControllerTypeDualSense)
                 {
                     gyroDeviceId = handle;
                     gyroConnected = true;
@@ -498,7 +698,8 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
                 }
             }
         }
-        catch (DllNotFoundException) { status = "Falta JoyShockLibrary.dll para el giroscopio"; }
+        catch (DllNotFoundException) { status = "Sin JoyShockLibrary: usa la palanca derecha para volar"; }
+        catch (EntryPointNotFoundException) { status = "JoyShockLibrary no compatible: usa la palanca derecha"; }
     }
 
     private void RefreshHackerTargets()
@@ -506,43 +707,49 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         foreach (int slot in Enumerable.Range(0, targetDoorIds.Length))
         {
             targetDoorIds[slot] = -1;
-            hackerTargetLabels[slot] = "Sin objetivo cercano";
+            hackerTargetLabels[slot] = slot == 0
+                ? $"□ Puerta más cercana · rango {DoorHackRangeMeters:0} m"
+                : new[] { "", "△ Acción futura", "○ Acción futura", "× Acción futura" }[slot];
         }
 
         if (droneController == null) return;
-        string[] buttons = { "□", "△", "○", "×" };
-        EscapeDoor[] nearest = EscapeCourseBuilder.Doors
+        EscapeDoor nearest = EscapeCourseBuilder.Doors
+            .Where(door => (door.transform.position - droneController.transform.position).sqrMagnitude <=
+                           DoorHackRangeMeters * DoorHackRangeMeters)
             .OrderBy(door => (door.transform.position - droneController.transform.position).sqrMagnitude)
-            .Take(targetDoorIds.Length)
-            .ToArray();
-        for (int slot = 0; slot < nearest.Length; slot++)
+            .FirstOrDefault();
+        if (nearest == null)
         {
-            EscapeDoor door = nearest[slot];
-            targetDoorIds[slot] = door.Id;
-            float distance = Vector3.Distance(door.transform.position, droneController.transform.position);
-            string doorState = door.Id >= 0 && door.Id < doorStates.Length && doorStates[door.Id] ? "abierta" : "cerrada";
-            hackerTargetLabels[slot] = $"{buttons[slot]} Puerta {door.Id + 1} · {distance:0} m · {doorState}";
+            hackerTargetLabels[0] = $"□ Sin puerta a alcance · acércate ({DoorHackRangeMeters:0} m)";
+            return;
         }
+
+        targetDoorIds[0] = nearest.Id;
+        float distance = Vector3.Distance(nearest.transform.position, droneController.transform.position);
+        string doorState = nearest.Id >= 0 && nearest.Id < doorStates.Length && doorStates[nearest.Id] ? "abierta" : "cerrada";
+        hackerTargetLabels[0] = $"□ Puerta {nearest.Id + 1} · {distance:0.0} m · {doorState}";
     }
 
     private void InteractWithTarget(int slot)
     {
-        if (slot < 0 || slot >= targetDoorIds.Length || targetDoorIds[slot] < 0)
+        if (slot != 0 || droneController == null || targetDoorIds[0] < 0)
         {
-            status = "No hay un objetivo asignado a ese botón";
+            status = $"No hay puerta a alcance para hackear (máx. {DoorHackRangeMeters:0} m)";
             EscapeModeHudFeed.Publish(status);
             return;
         }
 
-        int doorId = targetDoorIds[slot];
-        DoorHackUsed = true;
-        if (PythonEscapeModeBridge.Instance != null)
+        int doorId = targetDoorIds[0];
+        EscapeDoor door = EscapeCourseBuilder.Doors.FirstOrDefault(candidate => candidate.Id == doorId);
+        if (door == null || Vector3.Distance(door.transform.position, droneController.transform.position) > DoorHackRangeMeters)
         {
-            PythonEscapeModeBridge.Instance.ToggleDoor(doorId);
+            RefreshHackerTargets();
+            status = $"Acércate a la puerta; el hackeo requiere estar a {DoorHackRangeMeters:0} m o menos";
+            EscapeModeHudFeed.Publish(status);
             return;
         }
-        bool open = !doorStates[doorId];
-        RequestDoorState(doorId, open);
+
+        StartHackMinigame(doorId);
     }
 
     private void RequestDoorState(int doorId, bool open)

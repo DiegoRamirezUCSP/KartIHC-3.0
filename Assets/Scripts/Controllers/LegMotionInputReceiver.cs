@@ -57,11 +57,32 @@ public class LegMotionInputReceiver : MonoBehaviour
     private string projectRoot;
     private bool previewFrameReceived;
 
-    public bool IsConnected => ReadElapsedSeconds(lastPacketTime) <= timeoutSeconds && !LastCommand.StartsWith("CALIBRACION");
-    public float Throttle => IsConnected ? throttle : 0f;
-    public float Brake => IsConnected ? brake : 0f;
-    public string LastCommand => lastCommand;
-    public string LastMessage => lastMessage;
+    public bool IsConnected
+    {
+        get
+        {
+            lock (stateLock)
+                return ReadElapsedSeconds(lastPacketTime) <= timeoutSeconds && !lastCommand.StartsWith("CALIBRACION");
+        }
+    }
+    public float Throttle
+    {
+        get
+        {
+            lock (stateLock)
+                return ReadElapsedSeconds(lastPacketTime) <= timeoutSeconds && !lastCommand.StartsWith("CALIBRACION") ? throttle : 0f;
+        }
+    }
+    public float Brake
+    {
+        get
+        {
+            lock (stateLock)
+                return ReadElapsedSeconds(lastPacketTime) <= timeoutSeconds && !lastCommand.StartsWith("CALIBRACION") ? brake : 0f;
+        }
+    }
+    public string LastCommand { get { lock (stateLock) return lastCommand; } }
+    public string LastMessage { get { lock (stateLock) return lastMessage; } }
     public string CameraStatus => cameraStatus;
     public string CalibrationStatus => calibrationStatus;
     public Texture2D PreviewTexture => previewTexture;
@@ -230,6 +251,18 @@ public class LegMotionInputReceiver : MonoBehaviour
 
     private void Update()
     {
+        // Expire the latched leg command promptly if the camera script or UDP
+        // sender stops, rather than leaving the last state in the receiver.
+        lock (stateLock)
+        {
+            if (ReadElapsedSeconds(lastPacketTime) > timeoutSeconds)
+            {
+                throttle = 0f;
+                brake = 0f;
+                lastCommand = "NADA";
+            }
+        }
+
 #if ENABLE_INPUT_SYSTEM
         if (Keyboard.current != null)
         {
@@ -287,6 +320,13 @@ public class LegMotionInputReceiver : MonoBehaviour
         isRunning = false;
         udpClient?.Close();
         udpClient = null;
+        lock (stateLock)
+        {
+            throttle = 0f;
+            brake = 0f;
+            lastCommand = "NADA";
+            lastPacketTime = -timeoutSeconds;
+        }
         receiveThread = null;
         previewRunning = false;
         previewClient?.Close();
