@@ -79,6 +79,10 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private Camera droneCamera;
     private CharacterController droneController;
     private Camera savedGameplayCamera;
+    private GameObject hackIndicator;
+    private Transform hackIndicatorVisual;
+    private TextMesh hackIndicatorText;
+    private Material hackIndicatorMaterial;
     private string status = "";
 
     public static EscapeModeNetworkBridge Instance => instance;
@@ -381,6 +385,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             nextTargetRefresh = Time.unscaledTime + 0.2f;
             RefreshHackerTargets();
         }
+        UpdateHackIndicator();
 
         if (hackMinigameActive && Time.unscaledTime >= hackDeadline)
         {
@@ -730,6 +735,71 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         hackerTargetLabels[0] = $"□ Puerta {nearest.Id + 1} · {distance:0.0} m · {doorState}";
     }
 
+    private void UpdateHackIndicator()
+    {
+        bool canShow = droneController != null && droneCamera != null && !hackMinigameActive &&
+                       !DroneLocked && targetDoorIds[0] >= 0;
+        if (!canShow)
+        {
+            if (hackIndicator != null) hackIndicator.SetActive(false);
+            return;
+        }
+
+        EscapeDoor door = EscapeCourseBuilder.Doors.FirstOrDefault(candidate => candidate.Id == targetDoorIds[0]);
+        if (door == null)
+        {
+            if (hackIndicator != null) hackIndicator.SetActive(false);
+            return;
+        }
+
+        EnsureHackIndicator();
+        hackIndicator.SetActive(true);
+        hackIndicator.transform.position = door.transform.position + Vector3.up * 2.2f;
+        Vector3 towardCamera = hackIndicator.transform.position - droneCamera.transform.position;
+        if (towardCamera.sqrMagnitude > 0.001f)
+            hackIndicator.transform.rotation = Quaternion.LookRotation(towardCamera, Vector3.up);
+
+        hackIndicatorText.text = $"HACK · {door.Id + 1}";
+        float pulse = 1f + Mathf.Sin(Time.unscaledTime * 4f) * 0.08f;
+        hackIndicatorVisual.localScale = Vector3.one * (0.28f * pulse);
+    }
+
+    private void EnsureHackIndicator()
+    {
+        if (hackIndicator != null) return;
+
+        hackIndicator = new GameObject("HackableDoor3DIndicator");
+        hackIndicator.SetActive(false);
+
+        GameObject marker = GameObject.CreatePrimitive(PrimitiveType.Cube);
+        marker.name = "HackIndicatorMarker";
+        marker.transform.SetParent(hackIndicator.transform, false);
+        marker.transform.localPosition = new Vector3(0f, -0.45f, 0f);
+        marker.transform.localRotation = Quaternion.Euler(45f, 45f, 0f);
+        marker.transform.localScale = new Vector3(0.28f, 0.28f, 0.28f);
+        Collider markerCollider = marker.GetComponent<Collider>();
+        if (markerCollider != null) Destroy(markerCollider);
+        Renderer markerRenderer = marker.GetComponent<Renderer>();
+        if (markerRenderer != null)
+        {
+            hackIndicatorMaterial = markerRenderer.material;
+            hackIndicatorMaterial.color = new Color(1f, 0.68f, 0.12f);
+        }
+        hackIndicatorVisual = marker.transform;
+
+        GameObject label = new GameObject("HackIndicatorLabel");
+        label.transform.SetParent(hackIndicator.transform, false);
+        label.transform.localPosition = new Vector3(0f, 0.05f, 0f);
+        hackIndicatorText = label.AddComponent<TextMesh>();
+        hackIndicatorText.text = "HACK";
+        hackIndicatorText.anchor = TextAnchor.MiddleCenter;
+        hackIndicatorText.alignment = TextAlignment.Center;
+        hackIndicatorText.fontStyle = FontStyle.Bold;
+        hackIndicatorText.fontSize = 64;
+        hackIndicatorText.characterSize = 0.12f;
+        hackIndicatorText.color = new Color(1f, 0.84f, 0.35f);
+    }
+
     private void InteractWithTarget(int slot)
     {
         if (slot != 0 || droneController == null || targetDoorIds[0] < 0)
@@ -885,6 +955,8 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         if (droneCamera != null) droneCamera.enabled = false;
         if (isHacker && savedGameplayCamera != null) savedGameplayCamera.enabled = true;
         if (droneController != null) Destroy(droneController.gameObject);
+        if (hackIndicator != null) Destroy(hackIndicator);
+        if (hackIndicatorMaterial != null) Destroy(hackIndicatorMaterial);
         if (networkManager != null && handlersRegistered && networkManager.CustomMessagingManager != null)
         {
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(KartMessage);
