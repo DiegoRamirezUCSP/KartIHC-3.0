@@ -126,6 +126,7 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
         else if (type == "phase")
         {
             if (json.Contains("finished")) EscapeModeNetworkBridge.Instance?.ApplyExternalFinish();
+            else if (json.Contains("failed")) EscapeModeNetworkBridge.Instance?.ApplyExternalFailure();
         }
         else if (type == "error")
         {
@@ -152,6 +153,7 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
                 EscapeModeNetworkBridge.Instance?.ApplyExternalDoorState(i, snapshot.doors[i]);
         }
         if (snapshot.phase == "finished") EscapeModeNetworkBridge.Instance?.ApplyExternalFinish();
+        else if (snapshot.phase == "failed") EscapeModeNetworkBridge.Instance?.ApplyExternalFailure();
     }
 
     private void HandlePong(string json)
@@ -195,6 +197,11 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
     public void ReportFinished()
     {
         if (driverRole && client != null && client.Connected) client.Finish();
+    }
+
+    public void ReportFailed()
+    {
+        if (driverRole && client != null && client.Connected) client.Fail();
     }
 
     private void OnDestroy()

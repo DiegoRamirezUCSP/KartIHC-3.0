@@ -39,6 +39,14 @@ public class TrapPickup : MonoBehaviour
 
     private void OnTriggerEnter(Collider other)
     {
+        EscapePoliceCar police = other.GetComponentInParent<EscapePoliceCar>();
+        if (police != null)
+        {
+            police.EliminateByPlayerTrap();
+            Destroy(gameObject);
+            return;
+        }
+
         if (!string.IsNullOrEmpty(vehicleTag) && !other.CompareTag(vehicleTag))
         {
             return;

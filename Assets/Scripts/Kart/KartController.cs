@@ -260,6 +260,34 @@ namespace KartIHC.Kart
             stunRoutine = StartCoroutine(StunRoutine());
         }
 
+        public void ApplyPoliceTrapEffect(float durationSeconds)
+        {
+            if (IsShielded) return;
+            if (stunRoutine != null) StopCoroutine(stunRoutine);
+            stunRoutine = StartCoroutine(StunRoutine(Mathf.Max(0f, durationSeconds)));
+        }
+
+        public void RepairPoliceTrapEffect()
+        {
+            if (!IsStunned) return;
+            if (stunRoutine != null) StopCoroutine(stunRoutine);
+            stunRoutine = null;
+            IsStunned = false;
+            ClearWheelInputs();
+        }
+
+        public void StopKart()
+        {
+            SetInputEnabled(false);
+            if (rb == null) rb = GetComponent<Rigidbody>();
+            if (rb != null)
+            {
+                rb.linearVelocity = Vector3.zero;
+                rb.angularVelocity = Vector3.zero;
+            }
+            ClearWheelInputs();
+        }
+
         private IEnumerator TurboRoutine()
         {
             IsTurboActive = true;
@@ -295,13 +323,13 @@ namespace KartIHC.Kart
             shieldRoutine = null;
         }
 
-        private IEnumerator StunRoutine()
+        private IEnumerator StunRoutine(float durationSeconds = -1f)
         {
             IsStunned = true;
             rb.linearVelocity = Vector3.zero;
             rb.angularVelocity = Vector3.zero;
 
-            yield return new WaitForSeconds(trapStunDuration);
+            yield return new WaitForSeconds(durationSeconds < 0f ? trapStunDuration : durationSeconds);
 
             IsStunned = false;
             stunRoutine = null;

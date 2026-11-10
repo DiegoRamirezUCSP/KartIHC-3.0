@@ -206,6 +206,7 @@ public class PythonRelayClient : MonoBehaviour
     public void UseItem(string item, Vector3 p) => SendRaw($"{{\"t\":\"use_item\",\"item\":\"{item}\",\"p\":{V3(p)}}}");
     public void TrapHit(int trapId) => SendRaw($"{{\"t\":\"trap_hit\",\"id\":{trapId}}}");
     public void Finish() => SendRaw("{\"t\":\"finish\"}");
+    public void Fail() => SendRaw("{\"t\":\"fail\"}");
     public void CableHit() => SendRaw("{\"t\":\"cable_hit\"}");                           // hacker
     public void HackStart(int obstacle) => SendRaw($"{{\"t\":\"hack_start\",\"obstacle\":{obstacle}}}");
     public void HackResult(bool ok) => SendRaw($"{{\"t\":\"hack_result\",\"ok\":{(ok ? "true" : "false")}}}");

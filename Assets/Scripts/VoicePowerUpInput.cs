@@ -37,6 +37,7 @@ public class VoicePowerUpInput : MonoBehaviour
 
     [Header("Pantalla de inicio (cada comando acepta varias palabras)")]
     [SerializeField] private string[] startWords = { "empezar", "iniciar", "comenzar", "iniciar carrera", "empezar carrera", "modo carrera" };
+    [SerializeField] private string[] soloEscapeWords = { "escape solo", "modo escape solo", "iniciar escape solo" };
     [Tooltip("Cada tutorial tiene sus propias palabras. Solo funcionan en la pantalla de inicio.")]
     [SerializeField] private string[] tutorial1Words = { "tutorial uno" };
     [SerializeField] private string[] tutorial2Words = { "tutorial dos" };
@@ -72,6 +73,7 @@ public class VoicePowerUpInput : MonoBehaviour
     [SerializeField] private string[] calibrateLegCameraWords = { "calibrar" };
 
     public event Action StartRaceRequested;
+    public event Action SoloEscapeRequested;
     public event Action<int> TutorialRequested;
     public event Action HackerPracticeRequested;
     public event Action CancelTutorialRequested;
@@ -131,6 +133,7 @@ public class VoicePowerUpInput : MonoBehaviour
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         commands = new Dictionary<string, Action>();
         RegisterCommand(startWords, RequestStartRace);
+        RegisterCommand(soloEscapeWords, RequestSoloEscape);
         RegisterCommand(tutorial1Words, () => RequestTutorial(1));
         RegisterCommand(tutorial2Words, () => RequestTutorial(2));
         RegisterCommand(tutorial3Words, () => RequestTutorial(3));
@@ -261,6 +264,14 @@ public class VoicePowerUpInput : MonoBehaviour
         StartRaceRequested?.Invoke();
     }
 
+    private void RequestSoloEscape()
+    {
+        LastCommand = "escape solo";
+        ActivationCount++;
+        Debug.Log("Escape Solo solicitado por voz.");
+        SoloEscapeRequested?.Invoke();
+    }
+
     private void RequestTutorial(int tutorialId)
     {
         LastCommand = $"tutorial {tutorialId}";
@@ -281,7 +292,7 @@ public class VoicePowerUpInput : MonoBehaviour
     {
         LastCommand = CancelTutorialId;
         ActivationCount++;
-        Debug.Log("Cancelar tutorial solicitado.");
+        Debug.Log("Solicitud de cancelar o salir recibida.");
         CancelTutorialRequested?.Invoke();
     }
 

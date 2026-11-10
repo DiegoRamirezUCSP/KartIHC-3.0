@@ -105,6 +105,7 @@ class Game:
         self.driver = Driver()
         self.hacker = Hacker()
         self.finished = False
+        self.failed = False
         self.hacked_until = [0.0] * self.cfg.obstacles
         self.doors = [False] * self.cfg.obstacles
         self.hack_obstacle = -1
@@ -114,6 +115,8 @@ class Game:
 
     @property
     def phase(self) -> str:
+        if self.failed:
+            return "failed"
         if self.finished:
             return "finished"
         return "playing" if all(self.connected.values()) else "waiting"
@@ -261,6 +264,12 @@ class Game:
             return []
         self.finished = True
         return [("all", {"t": "finish"}), ("all", {"t": "phase", "phase": "finished"})]
+
+    def _on_fail(self, role, msg, now):
+        if role != "driver" or self.phase != "playing":
+            return []
+        self.failed = True
+        return [("all", {"t": "phase", "phase": "failed", "reason": "police_collision"})]
 
     # -- hacker
     def _on_cable_hit(self, role, msg, now):

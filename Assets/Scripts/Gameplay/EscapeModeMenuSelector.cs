@@ -26,7 +26,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     private GUIStyle titleStyle;
     private GUIStyle buttonStyle;
     private GUIStyle bodyStyle;
+    private Vector2 menuScroll;
     private bool startRaceAfterSceneLoad;
+    private bool soloEscapeAfterSceneLoad;
     private int tutorialAfterSceneLoad;
     private bool hackerTutorialAfterSceneLoad;
     private bool hackerPracticeAfterSceneLoad;
@@ -109,7 +111,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (voiceInput != null)
         {
             voiceInput.StartRaceRequested -= HandleStartRaceVoice;
+            voiceInput.SoloEscapeRequested -= StartSoloEscape;
             voiceInput.TutorialRequested -= HandleTutorialVoice;
+            voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;
@@ -123,7 +127,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (voiceInput != null)
         {
             voiceInput.StartRaceRequested += HandleStartRaceVoice;
+            voiceInput.SoloEscapeRequested += StartSoloEscape;
             voiceInput.TutorialRequested += HandleTutorialVoice;
+            voiceInput.CancelTutorialRequested += HandleCancelTutorialVoice;
             voiceInput.HackerPracticeRequested += HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested += HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested += OpenEscapeRoles;
@@ -138,6 +144,47 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     {
         if (SceneManager.GetActiveScene().name == ModeMenuSceneName)
             StartCareerMode();
+    }
+
+    private void StartSoloEscape()
+    {
+        if (soloEscapeAfterSceneLoad) return;
+        page = MenuPage.Modes;
+        visible = false;
+        soloEscapeAfterSceneLoad = true;
+        startRaceAfterSceneLoad = false;
+        tutorialAfterSceneLoad = 0;
+        SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+    }
+
+    private void HandleCancelTutorialVoice()
+    {
+        if (SceneManager.GetActiveScene().name == EscapeSceneName &&
+            EscapePoliceStationGenerator.Instance != null)
+        {
+            ReturnToModeMenu();
+            return;
+        }
+
+        EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+        if (SceneManager.GetActiveScene().name == EscapeSceneName && bridge != null &&
+            bridge.IsHacker && bridge.IsOfflinePractice)
+            ReturnToModeMenu();
+    }
+
+    public void ReturnToModeMenu()
+    {
+        soloEscapeAfterSceneLoad = false;
+        hackerPracticeAfterSceneLoad = false;
+        hackerTutorialAfterSceneLoad = false;
+        startRaceAfterSceneLoad = false;
+        tutorialAfterSceneLoad = 0;
+        EscapePoliceStationGenerator.Stop();
+        EscapeModeNetworkBridge.Stop();
+        EscapeCourseBuilder.RestoreStandardCourse();
+        page = MenuPage.Modes;
+        visible = false;
+        SceneManager.LoadScene(ModeMenuSceneName, LoadSceneMode.Single);
     }
 
     private void HandleTutorialVoice(int tutorialId)
@@ -180,7 +227,33 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     {
         if (SceneManager.GetActiveScene().name == "EscapeCourse")
         {
+            if (EscapePoliceStationGenerator.Instance != null)
+            {
+                ReturnToModeMenu();
+                return;
+            }
+            if (EscapeModeNetworkBridge.Instance != null && EscapeModeNetworkBridge.Instance.IsHacker)
+            {
+                if (EscapeModeNetworkBridge.Instance.IsOfflinePractice) ReturnToModeMenu();
+                else sessionController?.ExitEscapeMode();
+                return;
+            }
             sessionController?.ExitEscapeMode();
+            return;
+        }
+
+        if (SceneManager.GetActiveScene().name == ModeMenuSceneName)
+        {
+            if (page == MenuPage.Waiting)
+            {
+                pythonSessionController?.ExitLocalSession();
+                sessionController?.ExitEscapeMode();
+                page = MenuPage.Modes;
+            }
+            else if (page == MenuPage.EscapeRoles)
+            {
+                page = MenuPage.Modes;
+            }
             return;
         }
 
@@ -207,8 +280,11 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         {
             page = MenuPage.Modes;
             visible = true;
+            if (soloEscapeAfterSceneLoad)
+                StartCoroutine(BeginSelectedCareerMode());
         }
         if ((scene.name == CareerSceneName && (startRaceAfterSceneLoad || (tutorialAfterSceneLoad > 0 && tutorialAfterSceneLoad < 4))) ||
+            (scene.name == EscapeSceneName && soloEscapeAfterSceneLoad) ||
             (scene.name == EscapeSceneName && (hackerTutorialAfterSceneLoad || hackerPracticeAfterSceneLoad)))
             StartCoroutine(BeginSelectedCareerMode());
     }
@@ -219,7 +295,15 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         yield return null;
         stateManager = FindFirstObjectByType<GameStateManager>();
         uiController = FindFirstObjectByType<UIController>();
-        if (hackerPracticeAfterSceneLoad)
+        if (soloEscapeAfterSceneLoad)
+        {
+            EscapeModeHudFeed.Clear();
+            EscapeCourseBuilder.Build();
+            stateManager?.BeginPlaying();
+            EscapeModeNetworkBridge.StartForRole(true, true);
+            EscapeModeHudFeed.Publish("Escape Solo: cuatro patrullas activas. Llega a la zona de salida.");
+        }
+        else if (hackerPracticeAfterSceneLoad)
         {
             EscapeModeHudFeed.Clear();
             EscapeCourseBuilder.Build();
@@ -242,6 +326,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         hackerTutorialAfterSceneLoad = false;
         hackerPracticeAfterSceneLoad = false;
         startRaceAfterSceneLoad = false;
+        soloEscapeAfterSceneLoad = false;
     }
 
     private void StartCareerMode()
@@ -298,12 +383,13 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
         EnsureStyles();
         const float width = 620f;
-        float height = page == MenuPage.EscapeRoles ? 650f : page == MenuPage.Waiting ? 570f : 510f;
+        float height = page == MenuPage.EscapeRoles ? 650f : page == MenuPage.Waiting ? 570f : 600f;
         Rect panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         GUILayout.BeginArea(panel, GUIContent.none, panelStyle);
         GUILayout.Space(24f);
         GUILayout.Label("KART IHC", titleStyle);
         GUILayout.Space(8f);
+        menuScroll = GUILayout.BeginScrollView(menuScroll, GUILayout.Width(width - 56f), GUILayout.Height(height - 112f));
 
         if (page == MenuPage.Modes)
         {
@@ -314,6 +400,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             GUILayout.Space(12f);
             if (GUILayout.Button("MODO ESCAPE", buttonStyle, GUILayout.Height(64f)))
                 page = MenuPage.EscapeRoles;
+            GUILayout.Space(8f);
+            if (GUILayout.Button("ESCAPE SOLO · PATRULLAS", buttonStyle, GUILayout.Height(56f)))
+                StartSoloEscape();
             GUILayout.Space(10f);
             if (GUILayout.Button("PRUEBA HACKER", buttonStyle, GUILayout.Height(48f)))
                 HandleHackerPracticeVoice();
@@ -324,7 +413,10 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             for (int i = 0; i < tutorialLabels.Length; i++)
                 if (GUILayout.Button(tutorialLabels[i], buttonStyle, GUILayout.Height(42f))) HandleTutorialVoice(i + 1);
             GUILayout.EndHorizontal();
-            GUILayout.Label("Los controles en pantalla son respaldo; el juego se maneja por voz y dispositivos.", bodyStyle);
+            GUILayout.Label("Di «escape solo» para probar patrullas y salida. Los controles de pantalla son respaldo.", bodyStyle);
+            GUILayout.Space(12f);
+            if (GUILayout.Button("SALIR DEL JUEGO", buttonStyle, GUILayout.Height(44f)))
+                Application.Quit();
         }
         else if (page == MenuPage.EscapeRoles)
         {
@@ -414,6 +506,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             }
         }
 
+        GUILayout.EndScrollView();
         GUILayout.EndArea();
     }
 
@@ -475,7 +568,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (voiceInput != null)
         {
             voiceInput.StartRaceRequested -= HandleStartRaceVoice;
+            voiceInput.SoloEscapeRequested -= StartSoloEscape;
             voiceInput.TutorialRequested -= HandleTutorialVoice;
+            voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;

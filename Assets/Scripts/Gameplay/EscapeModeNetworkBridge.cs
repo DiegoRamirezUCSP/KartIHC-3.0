@@ -19,6 +19,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const string DoorRequestMessage = "KartIHC.Escape.DoorRequest";
     private const string DoorStateMessage = "KartIHC.Escape.DoorState";
     private const string FinishMessage = "KartIHC.Escape.Finish";
+    private const string LossMessage = "KartIHC.Escape.Loss";
     private const string StateRequestMessage = "KartIHC.Escape.StateRequest";
     private const string LatencyProbeMessage = "KartIHC.Escape.LatencyProbe";
     private const string LatencyReplyMessage = "KartIHC.Escape.LatencyReply";
@@ -61,6 +62,8 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private float droneHorizontalInput;
     private float droneForwardInput;
     private float droneYawInput;
+    private float droneLookPitch;
+    private bool droneMouseLookActive;
     private float nextTargetRefresh;
     private readonly int[] hackPattern = new int[HackPatternLength];
     private int hackDoorId = -1;
@@ -87,7 +90,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     public static EscapeModeNetworkBridge Instance => instance;
     public bool HasWon { get; private set; }
+    public bool HasLost { get; private set; }
     public bool IsHacker => isHacker;
+    public bool IsOfflinePractice => !networked && PythonEscapeModeBridge.Instance == null;
     public IReadOnlyList<string> HackerTargetLabels => hackerTargetLabels;
     public bool AnyDoorOpen { get { foreach (bool open in doorStates) if (open) return true; return false; } }
     public bool ZoomUsed { get; private set; }
@@ -131,7 +136,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     public static void Stop()
     {
-        if (instance != null) Destroy(instance.gameObject);
+        if (instance != null)
+        {
+            EscapePoliceStationGenerator.Stop();
+            Destroy(instance.gameObject);
+        }
     }
 
     private void Awake()
@@ -169,7 +178,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         {
             kart.SetInputEnabled(hostRole);
             if (!hostRole && kartBody != null) kartBody.isKinematic = true;
-            if (practice)
+            if (practice && !hostRole)
             {
                 kart.enabled = false;
                 foreach (Renderer renderer in kart.GetComponentsInChildren<Renderer>(true)) renderer.enabled = false;
@@ -182,6 +191,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             FindGyroDevice();
             RefreshHackerTargets();
         }
+
+        if (isHost && practice && kart != null)
+            EscapePoliceStationGenerator.StartForSolo(kart, this);
 
         RegisterMessagesWhenReady();
         EscapeModeHudFeed.Publish(status);
@@ -225,6 +237,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorRequestMessage, ReceiveDoorRequest);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorStateMessage, ReceiveDoorState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(FinishMessage, ReceiveFinish);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LossMessage, ReceiveLoss);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(StateRequestMessage, ReceiveStateRequest);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyProbeMessage, ReceiveLatencyProbe);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyReplyMessage, ReceiveLatencyReply);
@@ -394,9 +407,18 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         }
 
         Gamepad pad = Gamepad.current;
-        if (pad == null)
+        Keyboard keyboard = Keyboard.current;
+        Mouse mouse = Mouse.current;
+        if (keyboard != null && keyboard.escapeKey.wasPressedThisFrame &&
+            !networked && PythonEscapeModeBridge.Instance == null)
         {
-            status = "Conecta el mando PS4 para controlar el dron";
+            EscapeModeMenuSelector menu = FindFirstObjectByType<EscapeModeMenuSelector>();
+            if (menu != null) menu.ReturnToModeMenu();
+            return;
+        }
+        if (pad == null && keyboard == null && mouse == null)
+        {
+            status = "Conecta un mando o usa WASD y ratón para controlar el dron";
             return;
         }
         if (DroneLocked)
@@ -412,24 +434,36 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         }
         if (hackMinigameActive)
         {
-            UpdateHackMinigame(pad);
+            UpdateHackMinigame(pad, keyboard);
             return;
         }
         // Square (West on a DualShock layout) is reserved for door hacking.
         // The other face buttons remain available for future hacker actions.
-        UpdateTargetButton(pad.buttonWest, 0);
+        bool hackHeld = pad != null && pad.buttonWest.isPressed;
+        bool hackPressedThisFrame = pad != null && pad.buttonWest.wasPressedThisFrame;
+        if (keyboard != null)
+        {
+            hackHeld |= keyboard.hKey.isPressed;
+            hackPressedThisFrame |= keyboard.hKey.wasPressedThisFrame;
+        }
+        if (mouse != null)
+        {
+            hackHeld |= mouse.leftButton.isPressed;
+            hackPressedThisFrame |= mouse.leftButton.wasPressedThisFrame;
+        }
+        UpdateTargetButton(hackHeld, hackPressedThisFrame, 0);
         UpdateDroneMotion(pad);
     }
 
-    private void UpdateTargetButton(ButtonControl button, int slot)
+    private void UpdateTargetButton(bool isPressed, bool wasPressedThisFrame, int slot)
     {
-        if (button.wasPressedThisFrame)
+        if (wasPressedThisFrame)
         {
             targetButtonHoldTimes[slot] = 0f;
             targetButtonHoldHandled[slot] = false;
         }
 
-        if (button.isPressed)
+        if (isPressed)
         {
             targetButtonHoldTimes[slot] += Time.unscaledDeltaTime;
             if (!targetButtonHoldHandled[slot] && targetButtonHoldTimes[slot] >= 0.35f)
@@ -458,7 +492,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         EscapeModeHudFeed.Publish(status);
     }
 
-    private void UpdateHackMinigame(Gamepad pad)
+    private void UpdateHackMinigame(Gamepad pad, Keyboard keyboard)
     {
         if (Time.unscaledTime >= hackDeadline)
         {
@@ -468,10 +502,20 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
         int direction = -1;
         int pressedCount = 0;
-        ReadDpadPress(pad.dpad.up, 0, ref direction, ref pressedCount);
-        ReadDpadPress(pad.dpad.down, 1, ref direction, ref pressedCount);
-        ReadDpadPress(pad.dpad.left, 2, ref direction, ref pressedCount);
-        ReadDpadPress(pad.dpad.right, 3, ref direction, ref pressedCount);
+        if (pad != null)
+        {
+            ReadDpadPress(pad.dpad.up, 0, ref direction, ref pressedCount);
+            ReadDpadPress(pad.dpad.down, 1, ref direction, ref pressedCount);
+            ReadDpadPress(pad.dpad.left, 2, ref direction, ref pressedCount);
+            ReadDpadPress(pad.dpad.right, 3, ref direction, ref pressedCount);
+        }
+        if (keyboard != null)
+        {
+            ReadKeyPress(keyboard.upArrowKey, 0, ref direction, ref pressedCount);
+            ReadKeyPress(keyboard.downArrowKey, 1, ref direction, ref pressedCount);
+            ReadKeyPress(keyboard.leftArrowKey, 2, ref direction, ref pressedCount);
+            ReadKeyPress(keyboard.rightArrowKey, 3, ref direction, ref pressedCount);
+        }
         if (pressedCount == 0) return;
         if (pressedCount > 1 || direction != hackPattern[hackPatternProgress])
         {
@@ -487,6 +531,13 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private static void ReadDpadPress(ButtonControl button, int direction, ref int selectedDirection, ref int pressedCount)
     {
         if (!button.wasPressedThisFrame) return;
+        selectedDirection = direction;
+        pressedCount++;
+    }
+
+    private static void ReadKeyPress(KeyControl key, int direction, ref int selectedDirection, ref int pressedCount)
+    {
+        if (!key.wasPressedThisFrame) return;
         selectedDirection = direction;
         pressedCount++;
     }
@@ -554,7 +605,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         droneCamera.fieldOfView = 60f;
         droneCamera.nearClipPlane = 0.1f;
         droneCamera.enabled = true;
-        status = "Dron de reconocimiento activo";
+        status = "Dron activo · WASD mueve, Q/E altura, botón derecho del ratón mira, rueda acerca y mantén H o clic izquierdo para hackear";
         EscapeModeHudFeed.Publish(status);
     }
 
@@ -562,16 +613,34 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     {
         if (droneController == null || droneCamera == null) return;
 
-        if (pad.startButton.wasPressedThisFrame)
+        Keyboard keyboard = Keyboard.current;
+        Mouse mouse = Mouse.current;
+        if (pad != null && pad.startButton.wasPressedThisFrame)
             CalibrateDroneGyroscope();
 
         if (gyroDeviceId < 0) FindGyroDevice();
-        Vector2 tilt = ReadDroneTilt(pad);
+        Vector2 tilt = pad != null ? ReadDroneTilt(pad) : Vector2.zero;
+        Vector2 keyboardMove = Vector2.zero;
+        if (keyboard != null)
+        {
+            if (keyboard.aKey.isPressed) keyboardMove.x -= 1f;
+            if (keyboard.dKey.isPressed) keyboardMove.x += 1f;
+            if (keyboard.sKey.isPressed) keyboardMove.y -= 1f;
+            if (keyboard.wKey.isPressed) keyboardMove.y += 1f;
+            if (keyboard.rKey.wasPressedThisFrame) CalibrateDroneGyroscope();
+        }
+        tilt = Vector2.ClampMagnitude(tilt + keyboardMove, 1f);
         droneHorizontalInput = Mathf.Lerp(droneHorizontalInput, tilt.x, Time.unscaledDeltaTime * 7f);
         droneForwardInput = Mathf.Lerp(droneForwardInput, tilt.y, Time.unscaledDeltaTime * 7f);
-        droneAltitudeInput = pad.leftStick.y.ReadValue();
+        droneAltitudeInput = pad != null ? pad.leftStick.y.ReadValue() : 0f;
+        if (keyboard != null)
+        {
+            if (keyboard.eKey.isPressed) droneAltitudeInput += 1f;
+            if (keyboard.qKey.isPressed) droneAltitudeInput -= 1f;
+        }
+        droneAltitudeInput = Mathf.Clamp(droneAltitudeInput, -1f, 1f);
         if (Mathf.Abs(droneAltitudeInput) < 0.15f) droneAltitudeInput = 0f;
-        droneYawInput = pad.leftStick.x.ReadValue();
+        droneYawInput = pad != null ? pad.leftStick.x.ReadValue() : 0f;
         if (Mathf.Abs(droneYawInput) < 0.15f) droneYawInput = 0f;
         if (!allowMovement)
         {
@@ -589,16 +658,42 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         droneController.Move(movement * Time.unscaledDeltaTime);
         droneController.transform.Rotate(Vector3.up, droneYawInput * 100f * Time.unscaledDeltaTime, Space.World);
 
+        if (mouse != null && mouse.rightButton.isPressed && allowMovement)
+        {
+            Vector2 look = mouse.delta.ReadValue();
+            droneController.transform.Rotate(Vector3.up, look.x * 0.12f, Space.World);
+            droneLookPitch = Mathf.Clamp(droneLookPitch - look.y * 0.12f, -75f, 75f);
+            if (!droneMouseLookActive)
+            {
+                droneMouseLookActive = true;
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+            }
+        }
+        else if (droneMouseLookActive)
+        {
+            droneMouseLookActive = false;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+        }
+
         // Give the pilot helicopter-like flight feedback without tilting the
         // CharacterController or changing the movement axes.
-        Quaternion cameraTilt = Quaternion.Euler(droneForwardInput * 14f, 0f, -droneHorizontalInput * 11f);
+        Quaternion cameraTilt = Quaternion.Euler(droneLookPitch + droneForwardInput * 14f, 0f,
+            -droneHorizontalInput * 11f);
         droneCamera.transform.localRotation = Quaternion.Slerp(
             droneCamera.transform.localRotation, cameraTilt, Time.unscaledDeltaTime * 5f);
 
         if (horizontalMovement.sqrMagnitude > 0.025f) DroneHasMoved = true;
         if (Mathf.Abs(droneAltitudeInput) > 0.2f) DroneAltitudeUsed = true;
 
-        float zoom = pad.rightTrigger.ReadValue() - pad.leftTrigger.ReadValue();
+        float zoom = pad != null ? pad.rightTrigger.ReadValue() - pad.leftTrigger.ReadValue() : 0f;
+        if (keyboard != null)
+        {
+            if (keyboard.equalsKey.isPressed || keyboard.numpadPlusKey.isPressed) zoom += 1f;
+            if (keyboard.minusKey.isPressed || keyboard.numpadMinusKey.isPressed) zoom -= 1f;
+        }
+        if (mouse != null) zoom += mouse.scroll.ReadValue().y * 0.01f;
         if (Mathf.Abs(zoom) > 0.15f) ZoomUsed = true;
         droneCamera.fieldOfView = Mathf.Clamp(droneCamera.fieldOfView - zoom * 55f * Time.unscaledDeltaTime, 25f, 85f);
     }
@@ -894,7 +989,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     public void ReportDriverFinished()
     {
-        if (!isHost || HasWon) return;
+        if (!isHost || HasWon || HasLost) return;
         if (PythonEscapeModeBridge.Instance != null)
         {
             PythonEscapeModeBridge.Instance.ReportFinished();
@@ -909,6 +1004,45 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             using (var writer = new FastBufferWriter(1, Allocator.Temp))
                 networkManager.CustomMessagingManager.SendNamedMessageToAll(FinishMessage, writer, NetworkDelivery.ReliableSequenced);
         }
+    }
+
+    public void ReportDriverLost(string reason)
+    {
+        if (HasLost || HasWon) return;
+        HasLost = true;
+        status = "¡Derrota! " + reason + " Conductor y hacker pierden.";
+        EscapeModeHudFeed.Publish(status);
+        kart?.StopKart();
+
+        if (PythonEscapeModeBridge.Instance != null)
+        {
+            PythonEscapeModeBridge.Instance.ReportFailed();
+            return;
+        }
+
+        if (isHost && networkManager != null && networkManager.IsListening)
+        {
+            using (var writer = new FastBufferWriter(1, Allocator.Temp))
+                networkManager.CustomMessagingManager.SendNamedMessageToAll(LossMessage, writer, NetworkDelivery.ReliableSequenced);
+        }
+    }
+
+    private void ReceiveLoss(ulong senderClientId, FastBufferReader reader)
+    {
+        if (senderClientId != NetworkManager.ServerClientId || HasLost) return;
+        HasLost = true;
+        status = "¡Derrota! El conductor chocó con una patrulla. Ambos pierden.";
+        EscapeModeHudFeed.Publish(status);
+        kart?.StopKart();
+    }
+
+    public void ApplyExternalFailure(string reason = "El conductor chocó con una patrulla.")
+    {
+        if (HasLost || HasWon) return;
+        HasLost = true;
+        status = "¡Derrota! " + reason + " Ambos pierden.";
+        EscapeModeHudFeed.Publish(status);
+        kart?.StopKart();
     }
 
     private void ReceiveFinish(ulong senderClientId, FastBufferReader reader)
@@ -929,6 +1063,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         {
             using (var writer = new FastBufferWriter(1, Allocator.Temp))
                 networkManager.CustomMessagingManager.SendNamedMessage(FinishMessage, senderClientId, writer, NetworkDelivery.ReliableSequenced);
+        }
+        else if (HasLost)
+        {
+            using (var writer = new FastBufferWriter(1, Allocator.Temp))
+                networkManager.CustomMessagingManager.SendNamedMessage(LossMessage, senderClientId, writer, NetworkDelivery.ReliableSequenced);
         }
     }
 
@@ -952,6 +1091,12 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void OnDestroy()
     {
+        if (droneMouseLookActive)
+        {
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
+            droneMouseLookActive = false;
+        }
         if (droneCamera != null) droneCamera.enabled = false;
         if (isHacker && savedGameplayCamera != null) savedGameplayCamera.enabled = true;
         if (droneController != null) Destroy(droneController.gameObject);
@@ -963,6 +1108,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorRequestMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorStateMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(FinishMessage);
+            networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LossMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(StateRequestMessage);
             networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
         }
