@@ -10,17 +10,18 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const float TrapInterval = 15f;
     private const float RespawnDelay = 20f;
     private const float PatrolSpeed = 7f;
-    private const float ChaseSpeed = 10f;
+    private const float ChaseSpeed = 8.5f;
     private static EscapePoliceStationGenerator instance;
 
-    [SerializeField] private float visionRange = 38f;
-    [SerializeField, Range(15f, 160f)] private float visionAngle = 100f;
+    [SerializeField, Tooltip("Distancia máxima a la que una patrulla detecta el kart.")] private float visionRange = 38f;
+    [SerializeField, Range(30f, 160f), Tooltip("Apertura total del cono frontal. Reducirla aumenta el punto ciego; aumentarla lo reduce.")]
+    private float visionAngle = 100f;
+    [SerializeField, Range(20f, 31f)] private float patrolRoadRadius = 25.5f;
     private readonly List<EscapePoliceCar> patrols = new List<EscapePoliceCar>();
     private readonly float[] respawnAt = new float[PatrolCount];
     private readonly List<EscapePoliceTrap> traps = new List<EscapePoliceTrap>();
     private KartController kart;
     private EscapeModeNetworkBridge session;
-    private Vector3[] route;
     private Vector3[] stationSpawns;
     private readonly HashSet<GameObject> openedBarriers = new HashSet<GameObject>();
     private readonly List<EscapeFinishZone> openedFinishZones = new List<EscapeFinishZone>();
@@ -54,7 +55,6 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         session = bridge;
         HideEscapeDoors();
         BuildExitSpurAndStation();
-        BuildPatrolRoute();
         SpawnPatrols();
         OpenOuterBoundary();
     }
@@ -84,20 +84,13 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             police.StopChase();
         }
 
-        Vector3 destination;
-        if (police.IsChasing)
-        {
-            destination = kart.transform.position;
-            destination.y = police.transform.position.y;
-        }
-        else
-        {
-            destination = route[police.WaypointIndex];
-            destination.y = police.transform.position.y;
-            if (Vector3.SqrMagnitude(destination - police.transform.position) < 2.2f * 2.2f)
-                police.AdvanceWaypoint();
-            if (police.ShouldDropTrap) DropPoliceTrap(police);
-        }
+        // A chase speeds up the patrol along its assigned lane. It never
+        // steers directly at the kart, so police cannot cut across the track.
+        Vector3 destination = police.Route[police.WaypointIndex];
+        destination.y = police.transform.position.y;
+        if (Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
+            police.AdvanceWaypoint();
+        if (!police.IsChasing && police.ShouldDropTrap) DropPoliceTrap(police);
 
         float speed = police.IsChasing ? ChaseSpeed : PatrolSpeed;
         Vector3 previous = police.transform.position;
@@ -142,15 +135,26 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         return count;
     }
 
-    private void BuildPatrolRoute()
+    private Vector3[] BuildPatrolRoute(Vector3 spawnPosition)
     {
-        const float radius = 24f;
-        route = new Vector3[8];
-        for (int i = 0; i < route.Length; i++)
+        const int egressPoints = 4;
+        const int ringSegments = 48;
+        Vector3[] patrolRoute = new Vector3[egressPoints + ringSegments];
+        float laneX = Mathf.Clamp(spawnPosition.x, -4.5f, 4.5f);
+        patrolRoute[0] = new Vector3(laneX, 0.55f, spawnPosition.z - 3.5f);
+        patrolRoute[1] = new Vector3(laneX, 0.55f, 40f);
+        patrolRoute[2] = new Vector3(laneX, 0.55f, 30f);
+        float entryAngle = Mathf.Asin(laneX / patrolRoadRadius);
+        float entryZ = Mathf.Cos(entryAngle) * patrolRoadRadius;
+        patrolRoute[3] = new Vector3(laneX, 0.55f, entryZ);
+
+        for (int i = 0; i < ringSegments; i++)
         {
-            float angle = Mathf.PI * 2f * i / route.Length;
-            route[i] = new Vector3(Mathf.Sin(angle) * radius, 0.6f, Mathf.Cos(angle) * radius);
+            float angle = entryAngle + Mathf.PI * 2f * i / ringSegments;
+            patrolRoute[egressPoints + i] = new Vector3(
+                Mathf.Sin(angle) * patrolRoadRadius, 0.55f, Mathf.Cos(angle) * patrolRoadRadius);
         }
+        return patrolRoute;
     }
 
     private void SpawnPatrols()
@@ -163,7 +167,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         }
         for (int i = 0; i < PatrolCount; i++)
         {
-            float x = (i - 1.5f) * 2.8f;
+            float x = (i - 1.5f) * 2.4f;
             stationSpawns[i] = new Vector3(x, 0.55f, 56f);
             SpawnPolice(i);
         }
@@ -183,7 +187,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         body.useGravity = false;
         EscapePoliceCar police = root.AddComponent<EscapePoliceCar>();
         CreatePoliceVisual(root.transform);
-        police.Initialize(this, id, route, id * 2, stationSpawns[id], true);
+        police.Initialize(this, id, BuildPatrolRoute(stationSpawns[id]), 0, stationSpawns[id], true);
         patrols[id] = police;
         respawnAt[id] = float.PositiveInfinity;
     }
