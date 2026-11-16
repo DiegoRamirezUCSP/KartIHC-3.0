@@ -16,6 +16,7 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 public sealed class EscapeModeNetworkBridge : MonoBehaviour
 {
     private const string KartMessage = "KartIHC.Escape.Kart";
+    private const string DroneStateMessage = "KartIHC.Escape.Drone";
     private const string DoorRequestMessage = "KartIHC.Escape.DoorRequest";
     private const string DoorStateMessage = "KartIHC.Escape.DoorState";
     private const string FinishMessage = "KartIHC.Escape.Finish";
@@ -23,6 +24,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const string StateRequestMessage = "KartIHC.Escape.StateRequest";
     private const string LatencyProbeMessage = "KartIHC.Escape.LatencyProbe";
     private const string LatencyReplyMessage = "KartIHC.Escape.LatencyReply";
+    private const string CommunicationMessage = "KartIHC.Escape.Communication";
     private const float KartSendInterval = 1f / 20f;
     private const float DroneTiltDeadzone = 0.12f;
     private const float DoorHackRangeMeters = 7f;
@@ -34,6 +36,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private static EscapeModeNetworkBridge instance;
     private readonly bool[] doorStates = new bool[3];
+    private readonly List<string> communicationMessages = new List<string>();
     private NetworkManager networkManager;
     private KartController kart;
     private Rigidbody kartBody;
@@ -43,6 +46,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private bool networkDiagnosticsEnabled;
     private bool handlersRegistered;
     private float nextKartSend;
+    private float nextDroneSend;
     private long nextLatencyProbeTimestamp;
     private ulong nextLatencySequence;
     private ulong latencyPeerId;
@@ -79,6 +83,11 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private Quaternion remoteKartRotation;
     private Vector3 remoteKartVelocity;
     private bool hasRemoteKartState;
+    private Vector3 remoteDronePosition;
+    private Quaternion remoteDroneRotation = Quaternion.identity;
+    private bool hasRemoteDroneState;
+    private GameObject remoteDroneVisual;
+    private readonly List<Material> remoteDroneMaterials = new List<Material>();
     private Camera droneCamera;
     private CharacterController droneController;
     private Camera savedGameplayCamera;
@@ -86,6 +95,10 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private Transform hackIndicatorVisual;
     private TextMesh hackIndicatorText;
     private Material hackIndicatorMaterial;
+    private GameObject communicationMarker;
+    private TextMesh communicationMarkerText;
+    private float communicationMarkerExpiresAt;
+    private VoicePowerUpInput voiceInput;
     private string status = "";
 
     public static EscapeModeNetworkBridge Instance => instance;
@@ -94,6 +107,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     public bool IsHacker => isHacker;
     public bool IsOfflinePractice => !networked && PythonEscapeModeBridge.Instance == null;
     public IReadOnlyList<string> HackerTargetLabels => hackerTargetLabels;
+    public IReadOnlyList<string> CommunicationMessages => communicationMessages;
     public bool AnyDoorOpen { get { foreach (bool open in doorStates) if (open) return true; return false; } }
     public bool ZoomUsed { get; private set; }
     public bool DroneHasMoved { get; private set; }
@@ -156,6 +170,8 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void Configure(bool hostRole, bool practice)
     {
+        communicationMessages.Clear();
+        if (communicationMarker != null) Destroy(communicationMarker);
         DroneHasMoved = false;
         DroneAltitudeUsed = false;
         ZoomUsed = false;
@@ -196,6 +212,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             EscapePoliceStationGenerator.StartForSolo(kart, this);
 
         RegisterMessagesWhenReady();
+        BindVoiceInput();
         EscapeModeHudFeed.Publish(status);
     }
 
@@ -203,6 +220,21 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     {
         if (networkManager == null) networkManager = NetworkManager.Singleton;
         if (!handlersRegistered) RegisterMessagesWhenReady();
+        if (voiceInput == null) BindVoiceInput();
+        if (communicationMarker != null)
+        {
+            if (Time.unscaledTime >= communicationMarkerExpiresAt) Destroy(communicationMarker);
+            else
+            {
+                Camera view = isHacker ? droneCamera : Camera.main;
+                if (communicationMarkerText != null && view != null)
+                {
+                    Vector3 towardCamera = view.transform.position - communicationMarkerText.transform.position;
+                    if (towardCamera.sqrMagnitude > 0.001f)
+                        communicationMarkerText.transform.rotation = Quaternion.LookRotation(towardCamera, Vector3.up);
+                }
+            }
+        }
 
         if (isHost && networkManager != null && networkManager.IsListening && Time.unscaledTime >= nextKartSend)
         {
@@ -224,6 +256,14 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             }
         }
 
+        if (isHacker && networked && droneController != null && networkManager != null &&
+            networkManager.IsListening && Time.unscaledTime >= nextDroneSend)
+        {
+            nextDroneSend = Time.unscaledTime + KartSendInterval;
+            SendDroneState();
+        }
+        UpdateRemoteDroneVisual();
+
         UpdateLatencyTest();
         if (isHacker) UpdateHackerControls();
     }
@@ -234,6 +274,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             return;
 
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(KartMessage, ReceiveKartState);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DroneStateMessage, ReceiveDroneState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorRequestMessage, ReceiveDoorRequest);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorStateMessage, ReceiveDoorState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(FinishMessage, ReceiveFinish);
@@ -241,6 +282,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(StateRequestMessage, ReceiveStateRequest);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyProbeMessage, ReceiveLatencyProbe);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(LatencyReplyMessage, ReceiveLatencyReply);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(CommunicationMessage, ReceiveCommunication);
         networkManager.OnClientDisconnectCallback += OnClientDisconnected;
         handlersRegistered = true;
 
@@ -364,6 +406,155 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         averageRoundTripMs += (lastRoundTripMs - averageRoundTripMs) / latencyRepliesReceived;
     }
 
+    private void BindVoiceInput()
+    {
+        VoicePowerUpInput found = FindFirstObjectByType<VoicePowerUpInput>();
+        if (found == voiceInput) return;
+        if (voiceInput != null) voiceInput.CommunicationRequested -= HandleCommunicationRequested;
+        voiceInput = found;
+        if (voiceInput != null) voiceInput.CommunicationRequested += HandleCommunicationRequested;
+    }
+
+    private void HandleCommunicationRequested(string phrase)
+    {
+        int commandId = phrase switch
+        {
+            "Estoy aquí" => 0,
+            "Tengo problemas" => 1,
+            "Ven aquí" => 2,
+            "Ayúdame" => 3,
+            "Cuidado" => 4,
+            "Listo" => 5,
+            "Estoy hackeando" => 6,
+            "Estoy avanzando" => 7,
+            _ => -1
+        };
+        if (commandId < 0) return;
+
+        Transform speaker = isHacker && droneController != null ? droneController.transform :
+            kart != null ? kart.transform : transform;
+        Vector3 position = speaker.position;
+        Vector3 forward = speaker.forward;
+
+        if (PythonEscapeModeBridge.Instance != null && PythonEscapeModeBridge.Instance.NetworkTestActive)
+        {
+            PythonEscapeModeBridge.Instance.SendCommunication(commandId, position, forward);
+            return;
+        }
+
+        if (!networked || networkManager == null || !networkManager.IsListening ||
+            networkManager.CustomMessagingManager == null)
+        {
+            ApplyRemoteCommunication(commandId, position, forward, !isHost);
+            return;
+        }
+
+        if (isHost)
+        {
+            ApplyRemoteCommunication(commandId, position, forward, false);
+            BroadcastCommunication(commandId, position, forward, false);
+        }
+        else
+        {
+            using (var writer = new FastBufferWriter(32, Allocator.Temp))
+            {
+                writer.WriteValueSafe(commandId);
+                writer.WriteValueSafe(position);
+                writer.WriteValueSafe(forward);
+                networkManager.CustomMessagingManager.SendNamedMessage(
+                    CommunicationMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+            }
+        }
+    }
+
+    private void ReceiveCommunication(ulong senderClientId, FastBufferReader reader)
+    {
+        if (networkManager == null || !networkManager.IsListening) return;
+        if (isHost)
+        {
+            if (senderClientId == NetworkManager.ServerClientId) return;
+            reader.ReadValueSafe(out int commandId);
+            reader.ReadValueSafe(out Vector3 position);
+            reader.ReadValueSafe(out Vector3 forward);
+            ApplyRemoteCommunication(commandId, position, forward, true);
+            BroadcastCommunication(commandId, position, forward, true);
+        }
+        else
+        {
+            if (senderClientId != NetworkManager.ServerClientId) return;
+            reader.ReadValueSafe(out int commandId);
+            reader.ReadValueSafe(out Vector3 position);
+            reader.ReadValueSafe(out Vector3 forward);
+            reader.ReadValueSafe(out bool fromHacker);
+            ApplyRemoteCommunication(commandId, position, forward, fromHacker);
+        }
+    }
+
+    private void BroadcastCommunication(int commandId, Vector3 position, Vector3 forward, bool fromHacker)
+    {
+        using (var writer = new FastBufferWriter(33, Allocator.Temp))
+        {
+            writer.WriteValueSafe(commandId);
+            writer.WriteValueSafe(position);
+            writer.WriteValueSafe(forward);
+            writer.WriteValueSafe(fromHacker);
+            networkManager.CustomMessagingManager.SendNamedMessageToAll(
+                CommunicationMessage, writer, NetworkDelivery.ReliableSequenced);
+        }
+    }
+
+    public void ApplyRemoteCommunication(int commandId, Vector3 position, Vector3 forward, bool fromHacker)
+    {
+        string[] phrases = { "Estoy aquí", "Tengo problemas", "Ven aquí", "Ayúdame", "Cuidado", "Listo", "Estoy hackeando", "Estoy avanzando" };
+        if (commandId < 0 || commandId >= phrases.Length) return;
+        string role = fromHacker ? "HACKER" : "CONDUCTOR";
+        communicationMessages.Add($"{DateTime.Now:HH:mm} · {role}: {phrases[commandId]}");
+        while (communicationMessages.Count > 6) communicationMessages.RemoveAt(0);
+
+        if (commandId <= 3)
+        {
+            Vector3 markerPosition = position;
+            if (commandId == 2 || commandId == 3)
+            {
+                forward.y = 0f;
+                if (forward.sqrMagnitude < 0.01f) forward = Vector3.forward;
+                markerPosition += forward.normalized * 8f;
+            }
+            ShowCommunicationMarker(markerPosition, phrases[commandId], commandId);
+        }
+    }
+
+    private void ShowCommunicationMarker(Vector3 position, string label, int commandId)
+    {
+        if (communicationMarker != null) Destroy(communicationMarker);
+        if (Physics.Raycast(position + Vector3.up * 50f, Vector3.down, out RaycastHit groundHit, 200f))
+            position.y = groundHit.point.y;
+        communicationMarker = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
+        communicationMarker.name = "EscapeCommunicationMarker";
+        communicationMarker.transform.position = position + Vector3.up * 0.8f;
+        communicationMarker.transform.localScale = new Vector3(0.45f, 0.8f, 0.45f);
+        Collider markerCollider = communicationMarker.GetComponent<Collider>();
+        if (markerCollider != null) Destroy(markerCollider);
+        Renderer markerRenderer = communicationMarker.GetComponent<Renderer>();
+        if (markerRenderer != null)
+        {
+            markerRenderer.material.color = commandId == 1 ? new Color(1f, 0.18f, 0.12f) :
+                commandId == 3 ? new Color(1f, 0.65f, 0.08f) : new Color(0.15f, 0.85f, 1f);
+        }
+        GameObject textObject = new GameObject("EscapeCommunicationMarkerLabel");
+        textObject.transform.SetParent(communicationMarker.transform, false);
+        textObject.transform.localPosition = Vector3.up * 1.35f;
+        communicationMarkerText = textObject.AddComponent<TextMesh>();
+        communicationMarkerText.text = label.ToUpperInvariant();
+        communicationMarkerText.anchor = TextAnchor.MiddleCenter;
+        communicationMarkerText.alignment = TextAlignment.Center;
+        communicationMarkerText.fontStyle = FontStyle.Bold;
+        communicationMarkerText.fontSize = 48;
+        communicationMarkerText.characterSize = 0.09f;
+        communicationMarkerText.color = markerRenderer != null ? markerRenderer.material.color : Color.cyan;
+        communicationMarkerExpiresAt = Time.unscaledTime + 20f;
+    }
+
     private void SendKartState(ulong? targetClientId = null)
     {
         if (kart == null || networkManager.CustomMessagingManager == null) return;
@@ -389,6 +580,109 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         remoteKartRotation = rotation;
         remoteKartVelocity = velocity;
         hasRemoteKartState = true;
+    }
+
+    private void SendDroneState()
+    {
+        if (droneController == null || networkManager == null || !networkManager.IsListening ||
+            networkManager.CustomMessagingManager == null) return;
+        using (var writer = new FastBufferWriter(32, Allocator.Temp))
+        {
+            writer.WriteValueSafe(droneController.transform.position);
+            writer.WriteValueSafe(droneController.transform.rotation);
+            networkManager.CustomMessagingManager.SendNamedMessage(
+                DroneStateMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.UnreliableSequenced);
+        }
+    }
+
+    private void ReceiveDroneState(ulong senderClientId, FastBufferReader reader)
+    {
+        if (!isHost || senderClientId == NetworkManager.ServerClientId) return;
+        reader.ReadValueSafe(out remoteDronePosition);
+        reader.ReadValueSafe(out remoteDroneRotation);
+        hasRemoteDroneState = true;
+    }
+
+    public void ApplyRemoteDroneState(Vector3 position, Quaternion rotation)
+    {
+        if (!isHost) return;
+        remoteDronePosition = position;
+        remoteDroneRotation = rotation;
+        hasRemoteDroneState = true;
+    }
+
+    public void ClearRemoteDroneState()
+    {
+        hasRemoteDroneState = false;
+        if (remoteDroneVisual != null) remoteDroneVisual.SetActive(false);
+    }
+
+    private void UpdateRemoteDroneVisual()
+    {
+        if (!isHost || !hasRemoteDroneState || kart == null) return;
+        if (remoteDroneVisual == null) CreateRemoteDroneVisual();
+
+        bool nearby = (kart.transform.position - remoteDronePosition).sqrMagnitude <= 100f * 100f;
+        if (remoteDroneVisual.activeSelf != nearby) remoteDroneVisual.SetActive(nearby);
+        if (!nearby) return;
+
+        float blend = 1f - Mathf.Exp(-20f * Time.unscaledDeltaTime);
+        remoteDroneVisual.transform.position = Vector3.Lerp(
+            remoteDroneVisual.transform.position, remoteDronePosition, blend);
+        remoteDroneVisual.transform.rotation = Quaternion.Slerp(
+            remoteDroneVisual.transform.rotation, remoteDroneRotation, blend);
+    }
+
+    private void CreateRemoteDroneVisual()
+    {
+        remoteDroneVisual = new GameObject("HackerDrone_RemoteVisual");
+        remoteDroneVisual.transform.SetPositionAndRotation(remoteDronePosition, remoteDroneRotation);
+        Color bodyColor = new Color(0.08f, 0.78f, 0.88f);
+        Color frameColor = new Color(0.09f, 0.13f, 0.18f);
+        Color accentColor = new Color(0.98f, 0.59f, 0.1f);
+
+        AddRemoteDronePart("DroneCore", PrimitiveType.Cube, Vector3.zero,
+            Quaternion.identity, new Vector3(0.56f, 0.2f, 0.72f), bodyColor);
+        AddRemoteDronePart("DroneFrontCamera", PrimitiveType.Sphere, new Vector3(0f, -0.02f, 0.39f),
+            Quaternion.identity, new Vector3(0.2f, 0.16f, 0.16f), accentColor);
+
+        Vector3[] rotorPositions =
+        {
+            new Vector3(-0.58f, 0.04f, 0.52f), new Vector3(0.58f, 0.04f, 0.52f),
+            new Vector3(-0.58f, 0.04f, -0.52f), new Vector3(0.58f, 0.04f, -0.52f)
+        };
+        Vector3[] armPositions =
+        {
+            new Vector3(-0.34f, 0.01f, 0.34f), new Vector3(0.34f, 0.01f, 0.34f),
+            new Vector3(-0.34f, 0.01f, -0.34f), new Vector3(0.34f, 0.01f, -0.34f)
+        };
+        for (int i = 0; i < rotorPositions.Length; i++)
+        {
+            AddRemoteDronePart($"DroneArm_{i + 1}", PrimitiveType.Cube, armPositions[i],
+                Quaternion.identity, new Vector3(0.72f, 0.08f, 0.1f), frameColor);
+            AddRemoteDronePart($"DroneRotor_{i + 1}", PrimitiveType.Cylinder, rotorPositions[i],
+                Quaternion.identity, new Vector3(0.25f, 0.025f, 0.25f), accentColor);
+        }
+    }
+
+    private void AddRemoteDronePart(string partName, PrimitiveType primitive, Vector3 localPosition,
+        Quaternion localRotation, Vector3 scale, Color color)
+    {
+        GameObject part = GameObject.CreatePrimitive(primitive);
+        part.name = partName;
+        part.transform.SetParent(remoteDroneVisual.transform, false);
+        part.transform.localPosition = localPosition;
+        part.transform.localRotation = localRotation;
+        part.transform.localScale = scale;
+        Collider collider = part.GetComponent<Collider>();
+        if (collider != null) Destroy(collider);
+        Renderer renderer = part.GetComponent<Renderer>();
+        if (renderer != null)
+        {
+            Material material = renderer.material;
+            material.color = color;
+            remoteDroneMaterials.Add(material);
+        }
     }
 
     private void UpdateHackerControls()
@@ -1083,7 +1377,13 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
     private void OnClientDisconnected(ulong clientId)
     {
-        if (isHost || networkManager == null || clientId != networkManager.LocalClientId) return;
+        if (networkManager == null) return;
+        if (isHost && clientId != networkManager.LocalClientId)
+        {
+            ClearRemoteDroneState();
+            return;
+        }
+        if (isHost || clientId != networkManager.LocalClientId) return;
         status = "Se perdió la conexión. Buscando reconexión...";
         EscapeModeHudFeed.Publish(status);
         EscapeModeSessionController.Instance?.RetryHackerConnection();
@@ -1098,18 +1398,25 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             droneMouseLookActive = false;
         }
         if (droneCamera != null) droneCamera.enabled = false;
+        if (voiceInput != null) voiceInput.CommunicationRequested -= HandleCommunicationRequested;
         if (isHacker && savedGameplayCamera != null) savedGameplayCamera.enabled = true;
         if (droneController != null) Destroy(droneController.gameObject);
+        if (remoteDroneVisual != null) Destroy(remoteDroneVisual);
         if (hackIndicator != null) Destroy(hackIndicator);
+        if (communicationMarker != null) Destroy(communicationMarker);
         if (hackIndicatorMaterial != null) Destroy(hackIndicatorMaterial);
+        foreach (Material material in remoteDroneMaterials)
+            if (material != null) Destroy(material);
         if (networkManager != null && handlersRegistered && networkManager.CustomMessagingManager != null)
         {
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(KartMessage);
+            networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DroneStateMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorRequestMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorStateMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(FinishMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(LossMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(StateRequestMessage);
+            networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(CommunicationMessage);
             networkManager.OnClientDisconnectCallback -= OnClientDisconnected;
         }
         if (instance == this) instance = null;

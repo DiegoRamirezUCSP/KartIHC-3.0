@@ -114,6 +114,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.SoloEscapeRequested -= StartSoloEscape;
             voiceInput.TutorialRequested -= HandleTutorialVoice;
             voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
+            voiceInput.RestartRequested -= HandleRestartVoice;
+            voiceInput.ExitModeRequested -= HandleExitModeVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;
@@ -130,6 +132,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.SoloEscapeRequested += StartSoloEscape;
             voiceInput.TutorialRequested += HandleTutorialVoice;
             voiceInput.CancelTutorialRequested += HandleCancelTutorialVoice;
+            voiceInput.RestartRequested += HandleRestartVoice;
+            voiceInput.ExitModeRequested += HandleExitModeVoice;
             voiceInput.HackerPracticeRequested += HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested += HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested += OpenEscapeRoles;
@@ -170,6 +174,76 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         if (SceneManager.GetActiveScene().name == EscapeSceneName && bridge != null &&
             bridge.IsHacker && bridge.IsOfflinePractice)
             ReturnToModeMenu();
+    }
+
+    private void HandleRestartVoice()
+    {
+        if (SceneManager.GetActiveScene().name != EscapeSceneName) return;
+        GameStateManager activeStateManager = FindFirstObjectByType<GameStateManager>();
+        if (activeStateManager != null && activeStateManager.CurrentState == GameState.Tutorial) return;
+
+        if (EscapePoliceStationGenerator.Instance != null)
+        {
+            EscapeModeNetworkBridge.Stop();
+            soloEscapeAfterSceneLoad = true;
+            hackerPracticeAfterSceneLoad = false;
+            hackerTutorialAfterSceneLoad = false;
+            SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+            return;
+        }
+
+        EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+        if (bridge != null && bridge.IsOfflinePractice)
+        {
+            EscapeModeNetworkBridge.Stop();
+            hackerPracticeAfterSceneLoad = true;
+            hackerTutorialAfterSceneLoad = false;
+            soloEscapeAfterSceneLoad = false;
+            SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+            return;
+        }
+
+        if (PythonEscapeSessionController.Instance != null && PythonEscapeSessionController.Instance.IsActive)
+        {
+            PythonEscapeSessionController.Instance.RestartEscapeScene();
+            return;
+        }
+
+        EscapeModeSessionController.Instance?.RestartEscapeMode();
+    }
+
+    private void HandleExitModeVoice()
+    {
+        if (SceneManager.GetActiveScene().name == ModeMenuSceneName)
+        {
+            HandleModeMenuBackVoice();
+            return;
+        }
+
+        if (SceneManager.GetActiveScene().name == EscapeSceneName)
+        {
+            if (PythonEscapeSessionController.Instance != null && PythonEscapeSessionController.Instance.IsActive)
+            {
+                PythonEscapeSessionController.Instance.ExitLocalSession();
+                return;
+            }
+            if (EscapeModeSessionController.Instance != null &&
+                EscapeModeSessionController.Instance.HasActiveOrOngoingSession)
+            {
+                EscapeModeSessionController.Instance.ExitEscapeMode();
+                return;
+            }
+            ReturnToModeMenu();
+            return;
+        }
+
+        Time.timeScale = 1f;
+        EscapeModeNetworkBridge.Stop();
+        PythonEscapeModeBridge.Stop();
+        EscapeCourseBuilder.RestoreStandardCourse();
+        page = MenuPage.Modes;
+        visible = true;
+        SceneManager.LoadScene(ModeMenuSceneName, LoadSceneMode.Single);
     }
 
     public void ReturnToModeMenu()
@@ -257,21 +331,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             return;
         }
 
-        if (stateManager != null && stateManager.CurrentState == GameState.Tutorial)
-        {
-            stateManager.ReturnToMainMenu();
-            return;
-        }
-
-        if (page == MenuPage.Waiting)
-        {
-            sessionController?.ExitEscapeMode();
-            page = MenuPage.Modes;
-        }
-        else if (page == MenuPage.EscapeRoles)
-        {
-            page = MenuPage.Modes;
-        }
+        HandleExitModeVoice();
     }
 
     private void HandleSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -571,6 +631,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.SoloEscapeRequested -= StartSoloEscape;
             voiceInput.TutorialRequested -= HandleTutorialVoice;
             voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
+            voiceInput.RestartRequested -= HandleRestartVoice;
+            voiceInput.ExitModeRequested -= HandleExitModeVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;
             voiceInput.EscapeModeMenuRequested -= OpenEscapeRoles;

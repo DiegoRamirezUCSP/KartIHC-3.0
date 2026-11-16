@@ -201,6 +201,8 @@ public class PythonRelayClient : MonoBehaviour
         SendRaw($"{{\"t\":\"state\",\"p\":{V3(p)},\"r\":{Q(r)},\"v\":{V3(v)}}}");
 
     public void Ping(int counter) => SendRaw($"{{\"t\":\"ping\",\"c\":{counter}}}");
+    public void SendCommunication(int commandId, Vector3 position, Vector3 forward) =>
+        SendRaw($"{{\"t\":\"communication\",\"c\":{commandId},\"p\":{V3(position)},\"f\":{V3(forward)}}}");
     public void ToggleDoor(int doorId) => SendRaw($"{{\"t\":\"door_toggle\",\"id\":{doorId}}}");
     public void ItemPickup() => SendRaw("{\"t\":\"item_pickup\"}");                       // conductor
     public void UseItem(string item, Vector3 p) => SendRaw($"{{\"t\":\"use_item\",\"item\":\"{item}\",\"p\":{V3(p)}}}");

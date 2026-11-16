@@ -37,6 +37,16 @@ public sealed class PythonEscapeSessionController : MonoBehaviour
     public bool SearchFailed => searchFailed;
     public bool LastAttemptWasHost => driverRole;
 
+    public void RestartEscapeScene()
+    {
+        if (!pythonModeActive || exiting) return;
+        status = "Reiniciando la partida Escape local...";
+        PublishStatus();
+        sceneInitialized = false;
+        EscapeModeNetworkBridge.Stop();
+        SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+    }
+
     public void ClearFailure()
     {
         if (IsActive) return;

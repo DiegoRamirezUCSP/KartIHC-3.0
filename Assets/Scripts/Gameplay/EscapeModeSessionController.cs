@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Threading.Tasks;
 using KartIHC.Gameplay;
+using Unity.Collections;
 using Unity.Netcode;
 using Unity.Netcode.Transports.UTP;
 using Unity.Services.Authentication;
@@ -25,6 +26,7 @@ public sealed class EscapeModeSessionController : MonoBehaviour
     private const string ModeValue = "escape";
     private const string SavedSessionKey = "kartihc.escape.session";
     private const string SavedRoleKey = "kartihc.escape.role";
+    private const string RestartEscapeRequestMessage = "KartIHC.Escape.RestartRequest";
     private const float DriverSearchDuration = 15f;
 
     private static EscapeModeSessionController instance;
@@ -45,6 +47,7 @@ public sealed class EscapeModeSessionController : MonoBehaviour
     private string sessionCode = "";
     private NetworkManager networkManager;
     private bool createdNetworkManager;
+    private bool restartHandlerRegistered;
 
     public static EscapeModeSessionController Instance => instance;
     public bool IsEscapeSessionActive => currentSession != null;
@@ -464,8 +467,62 @@ public sealed class EscapeModeSessionController : MonoBehaviour
         EscapeCourseBuilder.Build();
         gameStateManager?.BeginPlaying();
         EscapeModeNetworkBridge.StartForRole(hostRole);
+        RegisterRestartHandler();
         status = hostRole ? "Conductor en la pista Escape." : "Hacker conectado al conductor.";
         EscapeModeHudFeed.Publish(status);
+    }
+
+    public void RestartEscapeMode()
+    {
+        if (!HasActiveOrOngoingSession || networkManager == null || !networkManager.IsListening)
+        {
+            status = "No hay una partida Escape activa para reiniciar.";
+            EscapeModeHudFeed.Publish(status);
+            return;
+        }
+
+        if (hostRole)
+        {
+            RestartEscapeSceneAsHost();
+            return;
+        }
+
+        if (networkManager.CustomMessagingManager == null) return;
+        using (var writer = new FastBufferWriter(1, Allocator.Temp))
+            networkManager.CustomMessagingManager.SendNamedMessage(
+                RestartEscapeRequestMessage, NetworkManager.ServerClientId, writer, NetworkDelivery.ReliableSequenced);
+        status = "Solicitando reinicio de la partida al conductor...";
+        EscapeModeHudFeed.Publish(status);
+    }
+
+    private void RegisterRestartHandler()
+    {
+        if (restartHandlerRegistered || networkManager == null || !networkManager.IsListening ||
+            networkManager.CustomMessagingManager == null) return;
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(
+            RestartEscapeRequestMessage, HandleRestartEscapeRequest);
+        restartHandlerRegistered = true;
+    }
+
+    private void HandleRestartEscapeRequest(ulong senderClientId, FastBufferReader reader)
+    {
+        if (hostRole && senderClientId != NetworkManager.ServerClientId)
+            RestartEscapeSceneAsHost();
+    }
+
+    private void RestartEscapeSceneAsHost()
+    {
+        if (!hostRole || networkManager == null || !networkManager.IsServer || networkManager.SceneManager == null)
+            return;
+        status = "Reiniciando la partida Escape para ambos jugadores...";
+        EscapeModeHudFeed.Publish(status);
+        EscapeModeNetworkBridge.Stop();
+        var result = networkManager.SceneManager.LoadScene(EscapeSceneName, LoadSceneMode.Single);
+        if (result != Unity.Netcode.SceneEventProgressStatus.Started)
+        {
+            status = "No se pudo reiniciar Escape: " + result;
+            EscapeModeHudFeed.Publish(status);
+        }
     }
 
     public async void RetryHackerConnection()
@@ -574,6 +631,8 @@ public sealed class EscapeModeSessionController : MonoBehaviour
     private void OnDestroy()
     {
         SceneManager.sceneLoaded -= HandleSceneLoaded;
+        if (restartHandlerRegistered && networkManager != null && networkManager.CustomMessagingManager != null)
+            networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(RestartEscapeRequestMessage);
         if (instance == this) instance = null;
     }
 }

@@ -118,7 +118,33 @@ public class GameHUD : MonoBehaviour
         }
 
         DrawEscapeEventHistory();
+        DrawCommunicationChat(activeBridge);
         DrawHackMinigameOverlay(activeBridge);
+    }
+
+    private void DrawCommunicationChat(EscapeModeNetworkBridge bridge)
+    {
+        if (bridge == null || SceneManager.GetActiveScene().name != "EscapeCourse" ||
+            bridge.CommunicationMessages.Count == 0) return;
+
+        float width = Mathf.Min(410f, Screen.width - margin * 2f);
+        float height = 34f + bridge.CommunicationMessages.Count * 25f;
+        Rect area = new Rect(margin, Screen.height - height - margin, width, height);
+        GUI.Box(area, "CHAT DE VOZ · ESCAPE");
+        if (escapeTextStyle == null)
+        {
+            escapeTextStyle = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = Mathf.Max(15, fontSize - 9),
+                richText = true,
+                wordWrap = true
+            };
+            escapeTextStyle.normal.textColor = Color.white;
+        }
+        GUILayout.BeginArea(new Rect(area.x + 10f, area.y + 24f, area.width - 20f, area.height - 26f));
+        foreach (string message in bridge.CommunicationMessages)
+            GUILayout.Label(message, escapeTextStyle);
+        GUILayout.EndArea();
     }
 
     private void DrawEscapeEventHistory()

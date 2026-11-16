@@ -44,7 +44,7 @@ public class VoicePowerUpInput : MonoBehaviour
     [SerializeField] private string[] tutorial3Words = { "tutorial tres" };
     [SerializeField] private string[] tutorial4Words = { "tutorial cuatro", "tutorial hacker" };
     [Tooltip("Sale del tutorial y vuelve a la pantalla de inicio. Solo funciona dentro de un tutorial.")]
-    [SerializeField] private string[] cancelTutorialWords = { "cancelar", "salir" };
+    [SerializeField] private string[] cancelTutorialWords = { "cancelar" };
 
     [Header("Power-ups")]
     [SerializeField] private string[] shieldWords = { "escudo" };
@@ -59,6 +59,7 @@ public class VoicePowerUpInput : MonoBehaviour
 
     [Header("Modo cooperativo Escape")]
     [SerializeField] private string[] backToModeMenuWords = { "volver menu", "regresar menu" };
+    [SerializeField] private string[] exitModeWords = { "salir" };
     [SerializeField] private string[] openEscapeMenuWords = { "escape", "modo escape", "abrir escape" };
     [SerializeField] private string[] createEscapeModeWords = { "activar modo escape" };
     [SerializeField] private string[] findEscapeModeWords = { "buscar modo escape" };
@@ -66,6 +67,16 @@ public class VoicePowerUpInput : MonoBehaviour
     [SerializeField] private string[] createLocalEscapeWords = { "activar modo escape local", "activar escape local", "crear escape local" };
     [SerializeField] private string[] findLocalEscapeWords = { "buscar modo escape local", "buscar escape local", "unirse escape local" };
     [SerializeField] private string[] leaveLocalEscapeWords = { "salir modo escape local", "salir escape local" };
+
+    [Header("Comunicacion cooperativa Escape")]
+    [SerializeField] private string[] communicationHereWords = { "estoy aqui" };
+    [SerializeField] private string[] communicationTroubleWords = { "tengo problemas" };
+    [SerializeField] private string[] communicationComeHereWords = { "ven aqui", "ven aquí" };
+    [SerializeField] private string[] communicationHelpWords = { "ayudame", "ayúdame" };
+    [SerializeField] private string[] communicationCautionWords = { "cuidado" };
+    [SerializeField] private string[] communicationReadyWords = { "listo" };
+    [SerializeField] private string[] communicationHackingWords = { "estoy hackeando" };
+    [SerializeField] private string[] communicationAdvancingWords = { "estoy avanzando" };
 
     [Header("Camara de piernas")]
     [SerializeField] private string[] activateLegCameraWords = { "activar camara", "encender la camara" };
@@ -82,6 +93,7 @@ public class VoicePowerUpInput : MonoBehaviour
     public event Action ResumeRequested;
     public event Action ControlsRequested;
     public event Action RestartRequested;
+    public event Action ExitModeRequested;
     public event Action EscapeModeHostRequested;
     public event Action EscapeModeJoinRequested;
     public event Action EscapeModeMenuRequested;
@@ -89,6 +101,7 @@ public class VoicePowerUpInput : MonoBehaviour
     public event Action LocalEscapeHostRequested;
     public event Action LocalEscapeJoinRequested;
     public event Action LocalEscapeExitRequested;
+    public event Action<string> CommunicationRequested;
     public event Action ModeMenuBackRequested;
     public event Action LegCameraActivateRequested;
     public event Action LegCameraChangeRequested;
@@ -140,6 +153,7 @@ public class VoicePowerUpInput : MonoBehaviour
         RegisterCommand(tutorial4Words, () => RequestTutorial(4));
         RegisterCommand(new[] { "prueba hacker", "probar hacker" }, RequestHackerPractice);
         RegisterCommand(cancelTutorialWords, RequestCancelTutorial);
+        RegisterCommand(exitModeWords, RequestExitMode);
         RegisterCommand(shieldWords, () => RequestPowerUp(ShieldId));
         RegisterCommand(boostWords, () => RequestPowerUp(BoostId));
         RegisterCommand(trapWords, () => RequestPowerUp(TrapId));
@@ -155,6 +169,14 @@ public class VoicePowerUpInput : MonoBehaviour
         RegisterCommand(createLocalEscapeWords, RequestLocalEscapeHost);
         RegisterCommand(findLocalEscapeWords, RequestLocalEscapeJoin);
         RegisterCommand(leaveLocalEscapeWords, RequestLocalEscapeExit);
+        RegisterCommand(communicationHereWords, () => RequestCommunication("Estoy aquí"));
+        RegisterCommand(communicationTroubleWords, () => RequestCommunication("Tengo problemas"));
+        RegisterCommand(communicationComeHereWords, () => RequestCommunication("Ven aquí"));
+        RegisterCommand(communicationHelpWords, () => RequestCommunication("Ayúdame"));
+        RegisterCommand(communicationCautionWords, () => RequestCommunication("Cuidado"));
+        RegisterCommand(communicationReadyWords, () => RequestCommunication("Listo"));
+        RegisterCommand(communicationHackingWords, () => RequestCommunication("Estoy hackeando"));
+        RegisterCommand(communicationAdvancingWords, () => RequestCommunication("Estoy avanzando"));
         RegisterCommand(activateLegCameraWords, RequestLegCameraActivate);
         RegisterCommand(changeLegCameraWords, RequestLegCameraChange);
         RegisterCommand(calibrateLegCameraWords, RequestLegCameraCalibrate);
@@ -185,7 +207,12 @@ public class VoicePowerUpInput : MonoBehaviour
         if (WasPressed(PowerUpKey.Tutorial1)) RequestTutorial(1);
         if (WasPressed(PowerUpKey.Tutorial2)) RequestTutorial(2);
         if (WasPressed(PowerUpKey.Tutorial3)) RequestTutorial(3);
-        if (WasPressed(PowerUpKey.CancelTutorial)) RequestCancelTutorial();
+        if (WasEscapePressed())
+        {
+            if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name == "ModeMenu")
+                RequestModeMenuBack();
+            else RequestExitMode();
+        }
         if (WasPressed(PowerUpKey.Shield)) RequestPowerUp(ShieldId);
         if (WasPressed(PowerUpKey.Boost)) RequestPowerUp(BoostId);
         if (WasPressed(PowerUpKey.Trap)) RequestPowerUp(TrapId);
@@ -328,6 +355,14 @@ public class VoicePowerUpInput : MonoBehaviour
         RestartRequested?.Invoke();
     }
 
+    private void RequestExitMode()
+    {
+        LastCommand = "salir";
+        ActivationCount++;
+        Debug.Log("Salir del modo activo solicitado.");
+        ExitModeRequested?.Invoke();
+    }
+
     private void RequestEscapeModeHost()
     {
         LastCommand = "activar modo escape";
@@ -355,6 +390,14 @@ public class VoicePowerUpInput : MonoBehaviour
         LastCommand = "salir escape local";
         ActivationCount++;
         LocalEscapeExitRequested?.Invoke();
+    }
+
+    private void RequestCommunication(string message)
+    {
+        LastCommand = message;
+        ActivationCount++;
+        Debug.Log($"Comunicación cooperativa solicitada: {message}.");
+        CommunicationRequested?.Invoke(message);
     }
 
     private void RequestEscapeModeMenu()
@@ -426,6 +469,18 @@ public class VoicePowerUpInput : MonoBehaviour
 #endif
     }
 
+    private bool WasEscapePressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (Keyboard.current != null) return Keyboard.current.escapeKey.wasPressedThisFrame;
+#endif
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetKeyDown(KeyCode.Escape);
+#else
+        return false;
+#endif
+    }
+
     private bool WasPressed(PowerUpKey key)
     {
 #if ENABLE_INPUT_SYSTEM
@@ -454,7 +509,7 @@ public class VoicePowerUpInput : MonoBehaviour
                 case PowerUpKey.Tutorial3:
                     return Keyboard.current.digit3Key.wasPressedThisFrame;
                 case PowerUpKey.CancelTutorial:
-                    return Keyboard.current.escapeKey.wasPressedThisFrame;
+                    return false;
             }
         }
 #endif
@@ -483,7 +538,7 @@ public class VoicePowerUpInput : MonoBehaviour
             case PowerUpKey.Tutorial3:
                 return Input.GetKeyDown(KeyCode.Alpha3);
             case PowerUpKey.CancelTutorial:
-                return Input.GetKeyDown(KeyCode.Escape);
+                return false;
         }
 #endif
 

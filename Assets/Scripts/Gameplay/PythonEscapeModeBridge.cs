@@ -8,6 +8,13 @@ using Stopwatch = System.Diagnostics.Stopwatch;
 public sealed class PythonEscapeModeBridge : MonoBehaviour
 {
     [Serializable] private sealed class PongMessage { public int c; }
+    [Serializable] private sealed class CommunicationMessage
+    {
+        public int c;
+        public float[] p;
+        public float[] f;
+        public string role;
+    }
 
     private static PythonEscapeModeBridge instance;
     private readonly Dictionary<int, long> pendingPings = new Dictionary<int, long>();
@@ -123,6 +130,7 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
     {
         if (type == "snap") ApplySnapshot(client.LastSnapshot);
         else if (type == "pong") HandlePong(json);
+        else if (type == "communication") HandleCommunication(json);
         else if (type == "phase")
         {
             if (json.Contains("finished")) EscapeModeNetworkBridge.Instance?.ApplyExternalFinish();
@@ -137,6 +145,20 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
     private void ApplySnapshot(PythonRelayClient.Snapshot snapshot)
     {
         if (snapshot == null) return;
+        if (driverRole && snapshot.hacker != null && snapshot.hacker.connected &&
+            snapshot.hacker.p != null && snapshot.hacker.p.Length >= 3 &&
+            snapshot.hacker.r != null && snapshot.hacker.r.Length >= 4)
+        {
+            Vector3 dronePosition = new Vector3(snapshot.hacker.p[0], snapshot.hacker.p[1], snapshot.hacker.p[2]);
+            Quaternion droneRotation = new Quaternion(
+                snapshot.hacker.r[0], snapshot.hacker.r[1], snapshot.hacker.r[2], snapshot.hacker.r[3]);
+            EscapeModeNetworkBridge.Instance?.ApplyRemoteDroneState(dronePosition, droneRotation);
+        }
+        else if (driverRole)
+        {
+            EscapeModeNetworkBridge.Instance?.ClearRemoteDroneState();
+        }
+
         if (!driverRole && snapshot.driver != null && snapshot.driver.p != null && snapshot.driver.r != null &&
             snapshot.driver.p.Length >= 3 && snapshot.driver.r.Length >= 4)
         {
@@ -192,6 +214,25 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
     public void ToggleDoor(int doorId)
     {
         if (!driverRole && client != null && client.Connected) client.ToggleDoor(doorId);
+    }
+
+    public void SendCommunication(int commandId, Vector3 position, Vector3 forward)
+    {
+        if (client != null && client.Connected)
+            client.SendCommunication(commandId, position, forward);
+    }
+
+    private void HandleCommunication(string json)
+    {
+        CommunicationMessage message;
+        try { message = JsonUtility.FromJson<CommunicationMessage>(json); }
+        catch (Exception) { return; }
+        if (message == null || message.p == null || message.p.Length < 3 || message.f == null || message.f.Length < 3)
+            return;
+        Vector3 position = new Vector3(message.p[0], message.p[1], message.p[2]);
+        Vector3 forward = new Vector3(message.f[0], message.f[1], message.f[2]);
+        EscapeModeNetworkBridge.Instance?.ApplyRemoteCommunication(
+            message.c, position, forward, message.role == "hacker");
     }
 
     public void ReportFinished()

@@ -152,14 +152,9 @@ namespace KartIHC.Gameplay
                 return;
             }
 
-            if (CurrentTutorialId == 4)
-            {
-                EscapeModeNetworkBridge.Stop();
-                SceneManager.LoadScene("ModeMenu", LoadSceneMode.Single);
-                return;
-            }
-
-            ReturnToMainMenu();
+            EscapeModeNetworkBridge.Stop();
+            Time.timeScale = 1f;
+            SceneManager.LoadScene("ModeMenu", LoadSceneMode.Single);
         }
 
         private void HandleVoicePause()
@@ -201,6 +196,10 @@ namespace KartIHC.Gameplay
 
         private void HandleVoiceRestart()
         {
+            // Escape modes own their own restart flow so the active role/session
+            // and the pursuit mode can be rebuilt without dropping to the menu.
+            if (SceneManager.GetActiveScene().name == "EscapeCourse") return;
+
             // En circuito normal reiniciar vuelve al inicio para poder elegir
             // circuito normal o cualquiera de los tutoriales otra vez.
             if (CurrentState != GameState.Playing && CurrentState != GameState.Paused)

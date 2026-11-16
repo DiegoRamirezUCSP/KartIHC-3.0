@@ -11301,6 +11301,7 @@ MonoBehaviour:
   - tutorial hacker
   cancelTutorialWords:
   - cancelar
+  exitModeWords:
   - salir
   shieldWords:
   - escudo

@@ -199,6 +199,17 @@ class Game:
     def _on_ping(self, role, msg, now):
         return [("sender", {"t": "pong", "c": msg.get("c"), "time": round(now - self.t0, 3)})]
 
+    def _on_communication(self, role, msg, now):
+        command = msg.get("c")
+        if isinstance(command, bool) or not isinstance(command, int) or not 0 <= command <= 7:
+            return self._deny("error", "senal de comunicacion invalida")
+        if self.phase != "playing":
+            return []
+        position = _vec(msg.get("p"), 3) or [0.0, 0.0, 0.0]
+        forward = _vec(msg.get("f"), 3) or [0.0, 0.0, 1.0]
+        return [("all", {"t": "communication", "c": command,
+                         "p": position, "f": forward, "role": role})]
+
     def _on_state(self, role, msg, now):
         p, r = _vec(msg.get("p"), 3), _vec(msg.get("r"), 4)
         if role == "driver":
