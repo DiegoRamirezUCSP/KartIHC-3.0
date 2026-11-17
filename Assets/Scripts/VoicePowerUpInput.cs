@@ -13,6 +13,12 @@ using UnityEngine.Windows.Speech;
 public class VoicePowerUpInput : MonoBehaviour
 {
     public const string VersionLabel = "VoicePowerUpInput v10 - practica hacker individual";
+    public const int CommunicationCommandCount = 8;
+    private static readonly string[] CommunicationCommandLabels =
+    {
+        "Estoy aquí", "Tengo problemas", "Ven aquí", "Ayúdame",
+        "Cuidado", "Listo", "Estoy hackeando", "Estoy avanzando"
+    };
 
     // Nombres "oficiales" de cada comando. El resto del juego (puente de input,
     // inventario, tutorial) compara con estos textos, sin importar que palabra
@@ -398,6 +404,13 @@ public class VoicePowerUpInput : MonoBehaviour
         ActivationCount++;
         Debug.Log($"Comunicación cooperativa solicitada: {message}.");
         CommunicationRequested?.Invoke(message);
+    }
+
+    /// <summary>Envía desde la rueda el mismo comando que reconoce el chat de voz.</summary>
+    public void RequestCommunicationFromWheel(int commandIndex)
+    {
+        if (commandIndex < 0 || commandIndex >= CommunicationCommandLabels.Length) return;
+        RequestCommunication(CommunicationCommandLabels[commandIndex]);
     }
 
     private void RequestEscapeModeMenu()

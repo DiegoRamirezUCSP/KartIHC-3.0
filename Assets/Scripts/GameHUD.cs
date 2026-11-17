@@ -1,6 +1,7 @@
 using KartIHC.Kart;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using UnityEngine.InputSystem;
 
 /// <summary>
 /// HUD compacto de diagnostico: muestra si cada dispositivo esta conectado,
@@ -36,6 +37,59 @@ public class GameHUD : MonoBehaviour
     private GUIStyle hackOverlayTitleStyle;
     private GUIStyle hackOverlayInfoStyle;
     private bool stylesReady;
+    private int communicationWheelSelection;
+    private static readonly string[] CommunicationWheelLabels =
+    {
+        "ESTOY AQUÍ", "TENGO PROBLEMAS", "VEN AQUÍ", "AYÚDAME",
+        "CUIDADO", "LISTO", "ESTOY HACKEANDO", "ESTOY AVANZANDO"
+    };
+
+    private void Update()
+    {
+        EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+        if (bridge == null || SceneManager.GetActiveScene().name != "EscapeCourse" || !IsCommandWheelHeld())
+            return;
+
+        Gamepad pad = Gamepad.current;
+        if (pad != null)
+        {
+            Vector2 stick = pad.leftStick.ReadValue();
+            if (stick.sqrMagnitude > 0.36f)
+            {
+                float angle = Mathf.Atan2(stick.x, stick.y) * Mathf.Rad2Deg;
+                if (angle < 0f) angle += 360f;
+                communicationWheelSelection = Mathf.RoundToInt(angle / 45f) % CommunicationWheelLabels.Length;
+            }
+
+            if (pad.dpad.left.wasPressedThisFrame) communicationWheelSelection = 6;
+            if (pad.dpad.right.wasPressedThisFrame) communicationWheelSelection = 2;
+            if (pad.dpad.up.wasPressedThisFrame) communicationWheelSelection = 0;
+            if (pad.dpad.down.wasPressedThisFrame) communicationWheelSelection = 4;
+            if (pad.buttonSouth.wasPressedThisFrame) SendSelectedCommunication();
+        }
+
+        Keyboard keyboard = Keyboard.current;
+        if (keyboard != null)
+        {
+            if (keyboard.leftArrowKey.wasPressedThisFrame) communicationWheelSelection = 6;
+            if (keyboard.rightArrowKey.wasPressedThisFrame) communicationWheelSelection = 2;
+            if (keyboard.upArrowKey.wasPressedThisFrame) communicationWheelSelection = 0;
+            if (keyboard.downArrowKey.wasPressedThisFrame) communicationWheelSelection = 4;
+            if (keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame)
+                SendSelectedCommunication();
+        }
+    }
+
+    private static bool IsCommandWheelHeld()
+    {
+        return Keyboard.current != null && Keyboard.current.tabKey.isPressed;
+    }
+
+    private void SendSelectedCommunication()
+    {
+        if (voiceInput == null) voiceInput = FindFirstObjectByType<VoicePowerUpInput>();
+        voiceInput?.RequestCommunicationFromWheel(communicationWheelSelection);
+    }
 
     private void Awake()
     {
@@ -120,6 +174,47 @@ public class GameHUD : MonoBehaviour
         DrawEscapeEventHistory();
         DrawCommunicationChat(activeBridge);
         DrawHackMinigameOverlay(activeBridge);
+        DrawCommunicationWheel(activeBridge);
+    }
+
+    private void DrawCommunicationWheel(EscapeModeNetworkBridge bridge)
+    {
+        if (bridge == null || SceneManager.GetActiveScene().name != "EscapeCourse" || !IsCommandWheelHeld())
+            return;
+
+        float radius = Mathf.Clamp(Mathf.Min(Screen.width, Screen.height) * 0.23f, 105f, 180f);
+        float nodeWidth = Mathf.Clamp(Screen.width * 0.15f, 125f, 190f);
+        float nodeHeight = 52f;
+        Vector2 center = new Vector2(Screen.width * 0.5f, Screen.height * 0.5f);
+
+        Color oldColor = GUI.color;
+        GUI.color = new Color(0.02f, 0.04f, 0.07f, 0.9f);
+        GUI.Box(new Rect(center.x - 148f, center.y - 35f, 296f, 70f), "RUEDA DE COMUNICACIÓN\nMueve la palanca y pulsa ✕ para enviar");
+        GUI.color = oldColor;
+
+        GUIStyle labelStyle = new GUIStyle(GUI.skin.box)
+        {
+            alignment = TextAnchor.MiddleCenter,
+            wordWrap = true,
+            fontSize = Mathf.Max(13, fontSize - 13),
+            fontStyle = FontStyle.Bold
+        };
+
+        for (int i = 0; i < CommunicationWheelLabels.Length; i++)
+        {
+            float angle = i * Mathf.PI / 4f;
+            Vector2 point = center + new Vector2(Mathf.Sin(angle), -Mathf.Cos(angle)) * radius;
+            Rect node = new Rect(point.x - nodeWidth * 0.5f, point.y - nodeHeight * 0.5f, nodeWidth, nodeHeight);
+            GUI.color = i == communicationWheelSelection
+                ? new Color(0.1f, 0.55f, 0.85f, 0.98f)
+                : new Color(0.05f, 0.08f, 0.12f, 0.92f);
+            GUI.Box(node, CommunicationWheelLabels[i], labelStyle);
+        }
+        GUI.color = oldColor;
+
+        GUI.Label(new Rect(center.x - 220f, center.y + radius + 35f, 440f, 30f),
+            "Mantén TAB para mostrar · suelta TAB para cerrar · flechas/Enter como respaldo",
+            GUI.skin.label);
     }
 
     private void DrawCommunicationChat(EscapeModeNetworkBridge bridge)
