@@ -11,8 +11,11 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     private const string EscapeSceneName = "EscapeCourse";
 
     private enum MenuPage { Modes, Commands, EscapeRoles, Waiting }
+    private const int CommandGuidePageCount = 4;
 
     private static EscapeModeMenuSelector instance;
+    public static EscapeModeMenuSelector Instance => instance;
+    public bool IsCommandLegendOpen => IsLegendOpen();
     private MenuPage page;
     private bool visible = true;
     private bool initialized;
@@ -35,6 +38,8 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     private bool hackerTutorialAfterSceneLoad;
     private bool hackerPracticeAfterSceneLoad;
     private string preparedSceneName = "";
+    private int commandGuidePage;
+    private MenuPage pageBeforeLegend = MenuPage.Modes;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void EnsureExists()
@@ -117,7 +122,10 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.TutorialRequested -= HandleTutorialVoice;
             voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
             voiceInput.RestartRequested -= HandleRestartVoice;
-            voiceInput.ControlsRequested -= HandleCommandsVoice;
+            voiceInput.LegendOpenRequested -= HandleLegendOpenVoice;
+            voiceInput.LegendPreviousRequested -= HandleLegendPreviousVoice;
+            voiceInput.LegendNextRequested -= HandleLegendNextVoice;
+            voiceInput.LegendCloseRequested -= HandleLegendCloseVoice;
             voiceInput.ExitModeRequested -= HandleExitModeVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;
@@ -136,7 +144,10 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.TutorialRequested += HandleTutorialVoice;
             voiceInput.CancelTutorialRequested += HandleCancelTutorialVoice;
             voiceInput.RestartRequested += HandleRestartVoice;
-            voiceInput.ControlsRequested += HandleCommandsVoice;
+            voiceInput.LegendOpenRequested += HandleLegendOpenVoice;
+            voiceInput.LegendPreviousRequested += HandleLegendPreviousVoice;
+            voiceInput.LegendNextRequested += HandleLegendNextVoice;
+            voiceInput.LegendCloseRequested += HandleLegendCloseVoice;
             voiceInput.ExitModeRequested += HandleExitModeVoice;
             voiceInput.HackerPracticeRequested += HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested += HandleModeMenuBackVoice;
@@ -154,13 +165,40 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             StartCareerMode();
     }
 
-    private void HandleCommandsVoice()
+    private void HandleLegendOpenVoice()
     {
         if (SceneManager.GetActiveScene().name != ModeMenuSceneName) return;
+        if (page == MenuPage.Commands) return;
+        pageBeforeLegend = page;
         page = MenuPage.Commands;
+        commandGuidePage = 0;
         menuScroll = Vector2.zero;
         visible = true;
     }
+
+    private void HandleLegendPreviousVoice()
+    {
+        if (!IsLegendOpen()) return;
+        commandGuidePage = (commandGuidePage + CommandGuidePageCount - 1) % CommandGuidePageCount;
+        menuScroll = Vector2.zero;
+    }
+
+    private void HandleLegendNextVoice()
+    {
+        if (!IsLegendOpen()) return;
+        commandGuidePage = (commandGuidePage + 1) % CommandGuidePageCount;
+        menuScroll = Vector2.zero;
+    }
+
+    private void HandleLegendCloseVoice()
+    {
+        if (!IsLegendOpen()) return;
+        page = pageBeforeLegend;
+        menuScroll = Vector2.zero;
+    }
+
+    private bool IsLegendOpen() =>
+        SceneManager.GetActiveScene().name == ModeMenuSceneName && page == MenuPage.Commands;
 
     private void StartSoloEscape()
     {
@@ -311,6 +349,9 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
     private void HandleModeMenuBackVoice()
     {
+        // While the legend is open, only the dedicated voice command closes it.
+        if (IsLegendOpen()) return;
+
         if (SceneManager.GetActiveScene().name == "EscapeCourse")
         {
             if (EscapePoliceStationGenerator.Instance != null)
@@ -339,11 +380,6 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             else if (page == MenuPage.EscapeRoles)
             {
                 page = MenuPage.Modes;
-            }
-            else if (page == MenuPage.Commands)
-            {
-                page = MenuPage.Modes;
-                menuScroll = Vector2.zero;
             }
             return;
         }
@@ -461,23 +497,18 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         EnsureStyles();
         float width = Mathf.Min(620f, Screen.width - 32f);
         float height = Mathf.Min(Screen.height - 32f,
-            page == MenuPage.Commands ? 760f : page == MenuPage.EscapeRoles ? 650f : page == MenuPage.Waiting ? 570f : 600f);
+            page == MenuPage.Commands ? 700f : page == MenuPage.EscapeRoles ? 650f : page == MenuPage.Waiting ? 570f : 600f);
         Rect panel = new Rect((Screen.width - width) * 0.5f, (Screen.height - height) * 0.5f, width, height);
         GUILayout.BeginArea(panel, GUIContent.none, panelStyle);
         GUILayout.Space(24f);
-        GUILayout.Label(page == MenuPage.Commands ? "COMANDOS DE VOZ" : "KART IHC", titleStyle);
+        GUILayout.Label(page == MenuPage.Commands ? "LEYENDA DE COMANDOS" : "KART IHC", titleStyle);
         GUILayout.Space(8f);
-        if (page == MenuPage.Modes && GUILayout.Button("GUÍA COMPLETA DE COMANDOS DE VOZ", buttonStyle, GUILayout.Height(50f)))
-        {
-            page = MenuPage.Commands;
-            menuScroll = Vector2.zero;
-        }
-        float reservedHeight = page == MenuPage.Commands ? 166f : page == MenuPage.Modes ? 164f : 112f;
+        float reservedHeight = page == MenuPage.Commands ? 188f : page == MenuPage.Modes ? 132f : 112f;
         menuScroll = GUILayout.BeginScrollView(menuScroll, GUILayout.Width(width - 56f), GUILayout.Height(height - reservedHeight));
 
         if (page == MenuPage.Modes)
         {
-            GUILayout.Label("Di «iniciar carrera» para la pista normal. Di «ayuda» o «controles» para abrir la guía. En Escape puedes usar Internet (Relay) o la misma Wi-Fi (Python).", bodyStyle);
+            GUILayout.Label("Di «abrir leyenda» o pulsa L para consultar los comandos. En Escape puedes usar Internet (Relay) o la misma Wi-Fi (Python).", bodyStyle);
             GUILayout.Space(18f);
             if (GUILayout.Button("CARRERA", buttonStyle, GUILayout.Height(64f)))
                 StartCareerMode();
@@ -595,56 +626,70 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         }
 
         GUILayout.EndScrollView();
-        if (page == MenuPage.Commands && GUILayout.Button("VOLVER A MODOS", buttonStyle, GUILayout.Height(46f)))
+        if (page == MenuPage.Commands)
         {
-            page = MenuPage.Modes;
-            menuScroll = Vector2.zero;
+            GUILayout.Space(8f);
+            GUILayout.Label("Di «anterior» o «siguiente» para pasar página. Di «cerrar leyenda» para salir.", bodyStyle);
         }
         GUILayout.EndArea();
     }
 
     private void DrawVoiceCommandGuide()
     {
-        GUILayout.Label("Voz disponible en Windows con micrófono. Las frases entre comillas son alias que ejecutan la misma acción.", commandBodyStyle);
+        GUILayout.Label($"PÁGINA {commandGuidePage + 1} DE {CommandGuidePageCount}", commandHeadingStyle);
         GUILayout.Space(10f);
-        CommandSection("MENÚ Y SELECCIÓN DE MODO",
-            "«empezar», «iniciar», «comenzar», «iniciar carrera», «empezar carrera» o «modo carrera»: abre la carrera normal.\n" +
-            "«escape», «modo escape» o «abrir escape»: abre la selección de rol y conexión.\n" +
-            "«escape solo», «modo escape solo» o «iniciar escape solo»: inicia Escape Solo con patrullas.\n" +
-            "«prueba hacker» o «probar hacker»: inicia la práctica individual del dron.");
 
-        CommandSection("TUTORIALES",
-            "«tutorial uno»: piernas. «tutorial dos»: mando del kart. «tutorial tres»: comandos y potenciadores.\n" +
-            "«tutorial cuatro» o «tutorial hacker»: tutorial del dron.\n" +
-            "«cancelar»: abandona el tutorial y regresa a ModeMenu.");
+        switch (commandGuidePage)
+        {
+            case 0:
+                CommandSection("INICIO Y MODOS",
+                    "«empezar», «iniciar», «comenzar», «iniciar carrera», «empezar carrera» o «modo carrera»: carga la carrera normal.\n" +
+                    "«escape», «modo escape» o «abrir escape»: abre la selección de partida Escape.\n" +
+                    "«escape solo», «modo escape solo» o «iniciar escape solo»: inicia Escape Solo con patrullas.\n" +
+                    "«prueba hacker» o «probar hacker»: inicia la práctica individual del dron.");
+                CommandSection("TUTORIALES",
+                    "«tutorial uno»: piernas. «tutorial dos»: mando del kart. «tutorial tres»: comandos y potenciadores.\n" +
+                    "«tutorial cuatro» o «tutorial hacker»: tutorial del dron.\n" +
+                    "«cancelar»: abandona un tutorial y vuelve al menú.");
+                break;
 
-        CommandSection("ESCAPE POR INTERNET · RELAY",
-            "Conductor: «activar modo escape» crea una sala. Hacker: «buscar modo escape» busca una sala existente.\n" +
-            "«salir modo escape»: cierra la sesión Escape. Buscar no crea una sala.");
+            case 1:
+                CommandSection("ESCAPE POR INTERNET · RELAY",
+                    "Conductor: «activar modo escape» crea una sala. Hacker: «buscar modo escape» busca una sala existente.\n" +
+                    "«salir modo escape»: cierra la sesión. Buscar no crea una sala.");
+                CommandSection("ESCAPE POR RED LOCAL · PYTHON",
+                    "Conductor: «activar modo escape local», «activar escape local» o «crear escape local»: inicia el servidor local.\n" +
+                    "Hacker: «buscar modo escape local», «buscar escape local» o «unirse escape local»: busca el servidor.\n" +
+                    "«salir modo escape local» o «salir escape local»: cierra la sesión local.");
+                CommandSection("NAVEGACIÓN DEL MENÚ",
+                    "«volver menu» o «regresar menu»: regresa desde una pantalla secundaria.\n" +
+                    "«salir»: vuelve al menú cuando no hay una leyenda abierta.");
+                break;
 
-        CommandSection("ESCAPE POR RED LOCAL · PYTHON",
-            "Conductor: «activar modo escape local», «activar escape local» o «crear escape local»: inicia el servidor local.\n" +
-            "Hacker: «buscar modo escape local», «buscar escape local» o «unirse escape local»: busca el servidor.\n" +
-            "«salir modo escape local» o «salir escape local»: cierra la sesión local.");
+            case 2:
+                CommandSection("CONDUCCIÓN Y ESTADO",
+                    "«escudo», «turbo»/«nitro»/«tubo» y «trampa»: usa el potenciador si está disponible.\n" +
+                    "«pausa»/«pausar»: pausa. «reanudar»/«continuar»: reanuda.\n" +
+                    "«controles»/«ayuda»: muestra los controles disponibles, por ejemplo durante una pausa.\n" +
+                    "«reiniciar»/«reinicio»: reinicia la actividad actual.");
+                CommandSection("CÁMARA DE PIERNAS",
+                    "«activar camara»/«encender la camara»: inicia la cámara.\n" +
+                    "«cambiar camara»: busca otra cámara conectada. «calibrar»: calibra el seguimiento.");
+                break;
 
-        CommandSection("CONDUCCIÓN Y ESTADO DEL JUEGO",
-            "«escudo», «turbo»/«nitro»/«tubo» y «trampa»: usa el potenciador correspondiente si está disponible.\n" +
-            "«pausa»/«pausar»: pausa. «reanudar»/«continuar»: reanuda.\n" +
-            "«controles»/«ayuda»: abre esta guía en ModeMenu; durante una pausa muestra los controles.\n" +
-            "«reiniciar»/«reinicio»: reinicia según el modo. «salir»: regresa a ModeMenu durante el juego.\n" +
-            "«volver menu»/«regresar menu»: vuelve desde una pantalla secundaria o sale del modo activo al menú de modos.");
+            default:
+                CommandSection("CHAT COOPERATIVO DE ESCAPE",
+                    "«Estoy aquí» y «Tengo problemas»: envían el mensaje y marcan la posición del emisor.\n" +
+                    "«Ven aquí» y «Ayúdame»: colocan una marca delante del emisor.\n" +
+                    "«Cuidado», «Listo», «Estoy hackeando» y «Estoy avanzando»: envían texto al chat compartido.");
+                CommandSection("USO DE ESTA LEYENDA",
+                    "Di «anterior» o «siguiente» para pasar las páginas; la navegación funciona en bucle.\n" +
+                    "Di «cerrar leyenda» para volver. Fuera de la leyenda, esos tres comandos no realizan ninguna acción.");
+                break;
+        }
 
-        CommandSection("CÁMARA DE PIERNAS",
-            "«activar camara»/«encender la camara»: inicia la cámara. «cambiar camara»: busca otra cámara conectada.\n" +
-            "«calibrar»: calibra el seguimiento de piernas.");
-
-        CommandSection("CHAT DE VOZ EN ESCAPE",
-            "«Estoy aquí» y «Tengo problemas»: envía el mensaje y marca la posición del emisor.\n" +
-            "«Ven aquí» y «Ayúdame»: coloca una marca delante del emisor para que la vea el compañero.\n" +
-            "«Cuidado», «Listo», «Estoy hackeando» y «Estoy avanzando»: envía el texto al chat compartido.");
-
-        GUILayout.Space(8f);
-        GUILayout.Label("Los comandos de Escape requieren estar en una partida Escape. El reconocimiento depende de Windows, el micrófono y el ruido ambiental.", commandBodyStyle);
+        GUILayout.FlexibleSpace();
+        GUILayout.Label("Voz disponible en Windows con micrófono · L abre esta leyenda desde ModeMenu.", commandBodyStyle);
     }
 
     private void CommandSection(string heading, string description)
@@ -739,7 +784,10 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
             voiceInput.TutorialRequested -= HandleTutorialVoice;
             voiceInput.CancelTutorialRequested -= HandleCancelTutorialVoice;
             voiceInput.RestartRequested -= HandleRestartVoice;
-            voiceInput.ControlsRequested -= HandleCommandsVoice;
+            voiceInput.LegendOpenRequested -= HandleLegendOpenVoice;
+            voiceInput.LegendPreviousRequested -= HandleLegendPreviousVoice;
+            voiceInput.LegendNextRequested -= HandleLegendNextVoice;
+            voiceInput.LegendCloseRequested -= HandleLegendCloseVoice;
             voiceInput.ExitModeRequested -= HandleExitModeVoice;
             voiceInput.HackerPracticeRequested -= HandleHackerPracticeVoice;
             voiceInput.ModeMenuBackRequested -= HandleModeMenuBackVoice;

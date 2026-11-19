@@ -63,6 +63,12 @@ public class VoicePowerUpInput : MonoBehaviour
     [SerializeField] private string[] controlsWords = { "controles", "ayuda" };
     [SerializeField] private string[] restartWords = { "reiniciar", "reinicio" };
 
+    [Header("Leyenda de comandos (ModeMenu)")]
+    [SerializeField] private string[] openLegendWords = { "abrir leyenda" };
+    [SerializeField] private string[] previousLegendPageWords = { "anterior" };
+    [SerializeField] private string[] nextLegendPageWords = { "siguiente" };
+    [SerializeField] private string[] closeLegendWords = { "cerrar leyenda" };
+
     [Header("Modo cooperativo Escape")]
     [SerializeField] private string[] backToModeMenuWords = { "volver menu", "regresar menu" };
     [SerializeField] private string[] exitModeWords = { "salir" };
@@ -98,6 +104,10 @@ public class VoicePowerUpInput : MonoBehaviour
     public event Action PauseRequested;
     public event Action ResumeRequested;
     public event Action ControlsRequested;
+    public event Action LegendOpenRequested;
+    public event Action LegendPreviousRequested;
+    public event Action LegendNextRequested;
+    public event Action LegendCloseRequested;
     public event Action RestartRequested;
     public event Action ExitModeRequested;
     public event Action EscapeModeHostRequested;
@@ -167,6 +177,10 @@ public class VoicePowerUpInput : MonoBehaviour
         RegisterCommand(resumeWords, RequestResume);
         RegisterCommand(controlsWords, RequestControls);
         RegisterCommand(restartWords, RequestRestart);
+        RegisterCommand(openLegendWords, RequestLegendOpen);
+        RegisterCommand(previousLegendPageWords, RequestLegendPrevious);
+        RegisterCommand(nextLegendPageWords, RequestLegendNext);
+        RegisterCommand(closeLegendWords, RequestLegendClose);
         RegisterCommand(createEscapeModeWords, RequestEscapeModeHost);
         RegisterCommand(findEscapeModeWords, RequestEscapeModeJoin);
         RegisterCommand(openEscapeMenuWords, RequestEscapeModeMenu);
@@ -208,6 +222,10 @@ public class VoicePowerUpInput : MonoBehaviour
 
     private void Update()
     {
+        if (WasLegendOpenPressed()) RequestLegendOpen();
+        if (EscapeModeMenuSelector.Instance != null && EscapeModeMenuSelector.Instance.IsCommandLegendOpen)
+            return;
+
         // Keyboard fallback for demos and testing without microphone.
         if (WasStartPressed()) RequestStartRace();
         if (WasPressed(PowerUpKey.Tutorial1)) RequestTutorial(1);
@@ -273,10 +291,16 @@ public class VoicePowerUpInput : MonoBehaviour
             return;
         }
 
-        if (commands.TryGetValue(args.text.ToLowerInvariant(), out Action command))
-        {
-            command.Invoke();
-        }
+        if (!commands.TryGetValue(args.text.ToLowerInvariant(), out Action command)) return;
+
+        EscapeModeMenuSelector menu = EscapeModeMenuSelector.Instance;
+        if (menu != null && menu.IsCommandLegendOpen &&
+            command != (Action)RequestLegendPrevious &&
+            command != (Action)RequestLegendNext &&
+            command != (Action)RequestLegendClose)
+            return;
+
+        command.Invoke();
     }
 #endif
 
@@ -351,6 +375,34 @@ public class VoicePowerUpInput : MonoBehaviour
         ActivationCount++;
         Debug.Log("Controles solicitados por voz.");
         ControlsRequested?.Invoke();
+    }
+
+    private void RequestLegendOpen()
+    {
+        LastCommand = "abrir leyenda";
+        ActivationCount++;
+        LegendOpenRequested?.Invoke();
+    }
+
+    private void RequestLegendPrevious()
+    {
+        LastCommand = "anterior";
+        ActivationCount++;
+        LegendPreviousRequested?.Invoke();
+    }
+
+    private void RequestLegendNext()
+    {
+        LastCommand = "siguiente";
+        ActivationCount++;
+        LegendNextRequested?.Invoke();
+    }
+
+    private void RequestLegendClose()
+    {
+        LastCommand = "cerrar leyenda";
+        ActivationCount++;
+        LegendCloseRequested?.Invoke();
     }
 
     private void RequestRestart()
@@ -477,6 +529,19 @@ public class VoicePowerUpInput : MonoBehaviour
 
 #if ENABLE_LEGACY_INPUT_MANAGER
         return Input.GetKeyDown(KeyCode.Return) || Input.GetKeyDown(KeyCode.KeypadEnter);
+#else
+        return false;
+#endif
+    }
+
+    private bool WasLegendOpenPressed()
+    {
+#if ENABLE_INPUT_SYSTEM
+        if (Keyboard.current != null) return Keyboard.current.lKey.wasPressedThisFrame;
+#endif
+
+#if ENABLE_LEGACY_INPUT_MANAGER
+        return Input.GetKeyDown(KeyCode.L);
 #else
         return false;
 #endif
