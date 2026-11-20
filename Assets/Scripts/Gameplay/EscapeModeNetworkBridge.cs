@@ -10,13 +10,14 @@ using UnityEngine.InputSystem.Controls;
 using Stopwatch = System.Diagnostics.Stopwatch;
 
 /// <summary>
-/// Relays authoritative kart, gate and finish state through the host's NGO session.
+/// Relays authoritative kart, police, gate and finish state through the host's NGO session.
 /// The hacker's reconnaissance drone is controlled and rendered locally.
 /// </summary>
 public sealed class EscapeModeNetworkBridge : MonoBehaviour
 {
     private const string KartMessage = "KartIHC.Escape.Kart";
     private const string DroneStateMessage = "KartIHC.Escape.Drone";
+    private const string PoliceStateMessage = "KartIHC.Escape.Police";
     private const string DoorRequestMessage = "KartIHC.Escape.DoorRequest";
     private const string DoorStateMessage = "KartIHC.Escape.DoorState";
     private const string FinishMessage = "KartIHC.Escape.Finish";
@@ -26,6 +27,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const string LatencyReplyMessage = "KartIHC.Escape.LatencyReply";
     private const string CommunicationMessage = "KartIHC.Escape.Communication";
     private const float KartSendInterval = 1f / 20f;
+    private const float PoliceSendInterval = 1f / 10f;
     private const float DroneTiltDeadzone = 0.12f;
     private const float DoorHackRangeMeters = 7f;
     private const int HackPatternLength = 6;
@@ -46,6 +48,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private bool networkDiagnosticsEnabled;
     private bool handlersRegistered;
     private float nextKartSend;
+    private float nextPoliceSend;
     private float nextDroneSend;
     private long nextLatencyProbeTimestamp;
     private ulong nextLatencySequence;
@@ -244,6 +247,12 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             SendKartState();
         }
 
+        if (isHost && networkManager != null && networkManager.IsListening && Time.unscaledTime >= nextPoliceSend)
+        {
+            nextPoliceSend = Time.unscaledTime + PoliceSendInterval;
+            SendPoliceState();
+        }
+
         if (!isHost && hasRemoteKartState && kart != null)
         {
             float blend = 1f - Mathf.Exp(-18f * Time.unscaledDeltaTime);
@@ -276,6 +285,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             return;
 
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(KartMessage, ReceiveKartState);
+        networkManager.CustomMessagingManager.RegisterNamedMessageHandler(PoliceStateMessage, ReceivePoliceState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DroneStateMessage, ReceiveDroneState);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorRequestMessage, ReceiveDoorRequest);
         networkManager.CustomMessagingManager.RegisterNamedMessageHandler(DoorStateMessage, ReceiveDoorState);
@@ -582,6 +592,49 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         remoteKartRotation = rotation;
         remoteKartVelocity = velocity;
         hasRemoteKartState = true;
+    }
+
+    private void SendPoliceState(ulong? targetClientId = null)
+    {
+        if (networkManager == null || networkManager.CustomMessagingManager == null) return;
+        EscapePoliceStationGenerator generator = EscapePoliceStationGenerator.Instance;
+        using (var writer = new FastBufferWriter(256, Allocator.Temp))
+        {
+            for (int id = 0; id < 4; id++)
+            {
+                bool active = false;
+                bool chasing = false;
+                Vector3 position = Vector3.zero;
+                Quaternion rotation = Quaternion.identity;
+                if (generator != null)
+                    generator.TryGetPoliceNetworkState(id, out active, out position, out rotation, out chasing);
+                writer.WriteValueSafe(active);
+                writer.WriteValueSafe(position);
+                writer.WriteValueSafe(rotation);
+                writer.WriteValueSafe(chasing);
+            }
+
+            if (targetClientId.HasValue)
+                networkManager.CustomMessagingManager.SendNamedMessage(PoliceStateMessage, targetClientId.Value,
+                    writer, NetworkDelivery.UnreliableSequenced);
+            else
+                networkManager.CustomMessagingManager.SendNamedMessageToAll(PoliceStateMessage, writer,
+                    NetworkDelivery.UnreliableSequenced);
+        }
+    }
+
+    private void ReceivePoliceState(ulong senderClientId, FastBufferReader reader)
+    {
+        if (isHost || senderClientId != NetworkManager.ServerClientId) return;
+        EscapePoliceStationGenerator generator = EscapePoliceStationGenerator.Instance;
+        for (int id = 0; id < 4; id++)
+        {
+            reader.ReadValueSafe(out bool active);
+            reader.ReadValueSafe(out Vector3 position);
+            reader.ReadValueSafe(out Quaternion rotation);
+            reader.ReadValueSafe(out bool chasing);
+            generator?.ApplyRemotePoliceNetworkState(id, active, position, rotation, chasing);
+        }
     }
 
     private void SendDroneState()
@@ -1353,6 +1406,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     {
         if (!isHost || senderClientId == NetworkManager.ServerClientId) return;
         SendKartState(senderClientId);
+        SendPoliceState(senderClientId);
         for (int i = 0; i < doorStates.Length; i++)
             SendDoorState(senderClientId, i, doorStates[i]);
         if (HasWon)
@@ -1412,6 +1466,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         if (networkManager != null && handlersRegistered && networkManager.CustomMessagingManager != null)
         {
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(KartMessage);
+            networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(PoliceStateMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DroneStateMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorRequestMessage);
             networkManager.CustomMessagingManager.UnregisterNamedMessageHandler(DoorStateMessage);

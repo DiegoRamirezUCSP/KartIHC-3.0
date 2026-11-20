@@ -30,6 +30,10 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private readonly int[] doorTraversalPhase = new int[PatrolCount];
     private readonly float[] nextDoorSearchAt = new float[PatrolCount];
     private readonly RaycastHit[] obstructionHits = new RaycastHit[16];
+    private readonly Vector3[] remotePolicePositions = new Vector3[PatrolCount];
+    private readonly Quaternion[] remotePoliceRotations = new Quaternion[PatrolCount];
+    private readonly bool[] remotePoliceChasing = new bool[PatrolCount];
+    private readonly bool[] hasRemotePoliceState = new bool[PatrolCount];
     private readonly List<EscapePoliceTrap> traps = new List<EscapePoliceTrap>();
     private KartController kart;
     private EscapeModeNetworkBridge session;
@@ -84,6 +88,12 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
     private void Update()
     {
+        if (!authoritative)
+        {
+            UpdateRemotePolicePresentation();
+            return;
+        }
+
         for (int i = 0; i < patrols.Count; i++)
         {
             if (patrols[i] == null && Time.time >= respawnAt[i]) SpawnPolice(i);
@@ -92,6 +102,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
     public void TickPolice(EscapePoliceCar police)
     {
+        if (!authoritative) return;
         if (police == null || kart == null || session == null || session.HasLost || session.HasWon) return;
 
         bool visible = CanSeeKart(police);
@@ -475,6 +486,62 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         nextDoorSearchAt[id] = Time.time + id * 0.2f;
         patrols[id] = police;
         respawnAt[id] = float.PositiveInfinity;
+    }
+
+    public bool TryGetPoliceNetworkState(int id, out bool active, out Vector3 position,
+        out Quaternion rotation, out bool chasing)
+    {
+        active = false;
+        position = Vector3.zero;
+        rotation = Quaternion.identity;
+        chasing = false;
+        if (!authoritative || id < 0 || id >= patrols.Count) return false;
+
+        EscapePoliceCar police = patrols[id];
+        active = police != null;
+        if (police == null) return true;
+        position = police.transform.position;
+        rotation = police.transform.rotation;
+        chasing = police.IsChasing;
+        return true;
+    }
+
+    public void ApplyRemotePoliceNetworkState(int id, bool active, Vector3 position,
+        Quaternion rotation, bool chasing)
+    {
+        if (authoritative || id < 0 || id >= patrols.Count) return;
+
+        if (!active)
+        {
+            if (patrols[id] != null) Destroy(patrols[id].gameObject);
+            patrols[id] = null;
+            hasRemotePoliceState[id] = false;
+            respawnAt[id] = float.PositiveInfinity;
+            return;
+        }
+
+        bool newlySpawned = patrols[id] == null;
+        if (newlySpawned) SpawnPolice(id);
+        remotePolicePositions[id] = position;
+        remotePoliceRotations[id] = rotation;
+        remotePoliceChasing[id] = chasing;
+        hasRemotePoliceState[id] = true;
+        patrols[id].ApplyRemoteChaseState(chasing);
+        if (newlySpawned)
+            patrols[id].transform.SetPositionAndRotation(position, rotation);
+    }
+
+    private void UpdateRemotePolicePresentation()
+    {
+        float blend = 1f - Mathf.Exp(-18f * Time.unscaledDeltaTime);
+        for (int i = 0; i < patrols.Count; i++)
+        {
+            EscapePoliceCar police = patrols[i];
+            if (police == null || !hasRemotePoliceState[i]) continue;
+            police.transform.position = Vector3.Lerp(police.transform.position, remotePolicePositions[i], blend);
+            police.transform.rotation = Quaternion.Slerp(police.transform.rotation, remotePoliceRotations[i], blend);
+            police.ApplyRemoteChaseState(remotePoliceChasing[i]);
+        }
     }
 
     private void CreatePoliceVisual(Transform parent)

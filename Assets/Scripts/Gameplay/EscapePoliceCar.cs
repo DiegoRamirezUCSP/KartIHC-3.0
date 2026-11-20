@@ -87,6 +87,11 @@ public sealed class EscapePoliceCar : MonoBehaviour
         usingOuterRoute = outside;
     }
 
+    public void ApplyRemoteChaseState(bool isChasing)
+    {
+        chasing = isChasing;
+    }
+
     public bool ShouldDropTrap => !chasing && Time.time >= nextTrapAt;
 
     public void TrapDropped(float interval)

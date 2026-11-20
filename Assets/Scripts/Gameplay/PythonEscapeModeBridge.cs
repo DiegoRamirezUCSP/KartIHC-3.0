@@ -117,6 +117,7 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
             if (kart == null) return;
             client.SendState(kart.transform.position, kart.transform.rotation,
                 kartBody != null ? kartBody.linearVelocity : Vector3.zero);
+            client.SendPoliceState(EscapePoliceStationGenerator.Instance);
             return;
         }
 
@@ -167,6 +168,22 @@ public sealed class PythonEscapeModeBridge : MonoBehaviour
             if (snapshot.driver.v != null && snapshot.driver.v.Length >= 3)
                 remoteKartVelocity = new Vector3(snapshot.driver.v[0], snapshot.driver.v[1], snapshot.driver.v[2]);
             hasRemoteKartState = true;
+        }
+
+        if (!driverRole && snapshot.police != null)
+        {
+            EscapePoliceStationGenerator generator = EscapePoliceStationGenerator.Instance;
+            int count = Mathf.Min(4, snapshot.police.Length);
+            for (int i = 0; i < count; i++)
+            {
+                PythonRelayClient.PoliceState state = snapshot.police[i];
+                if (state == null) continue;
+                Vector3 position = state.p != null && state.p.Length >= 3
+                    ? new Vector3(state.p[0], state.p[1], state.p[2]) : Vector3.zero;
+                Quaternion rotation = state.r != null && state.r.Length >= 4
+                    ? new Quaternion(state.r[0], state.r[1], state.r[2], state.r[3]) : Quaternion.identity;
+                generator?.ApplyRemotePoliceNetworkState(i, state.active, position, rotation, state.chasing);
+            }
         }
 
         if (snapshot.doors != null)

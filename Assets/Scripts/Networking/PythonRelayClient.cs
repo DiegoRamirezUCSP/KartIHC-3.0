@@ -21,11 +21,17 @@ public class PythonRelayClient : MonoBehaviour
     [Serializable] public class HackerState { public bool connected; public float[] p, r; public bool frozen; public float freeze; public bool can_hack; public float lock_; }
     [Serializable] public class HackState { public bool active; public int obstacle; public float left; }
     [Serializable] public class TrapState { public int id; public float[] p; }
+    [Serializable] public class PoliceState
+    {
+        public bool active;
+        public float[] p, r;
+        public bool chasing;
+    }
     [Serializable] public class Snapshot
     {
         public int tick; public float time; public string phase;
         public DriverState driver; public HackerState hacker; public HackState hack;
-        public bool[] hacked; public bool[] doors; public TrapState[] traps;
+        public bool[] hacked; public bool[] doors; public TrapState[] traps; public PoliceState[] police;
     }
 
     public enum Role { Driver, Hacker }
@@ -199,6 +205,26 @@ public class PythonRelayClient : MonoBehaviour
     /// <summary>Llamar ~30 veces por segundo con la posicion de tu kart (conductor) o dron (hacker).</summary>
     public void SendState(Vector3 p, Quaternion r, Vector3 v) =>
         SendRaw($"{{\"t\":\"state\",\"p\":{V3(p)},\"r\":{Q(r)},\"v\":{V3(v)}}}");
+
+    public void SendPoliceState(EscapePoliceStationGenerator generator)
+    {
+        if (generator == null) return;
+        var json = new StringBuilder(512);
+        json.Append("{\"t\":\"police_state\",\"police\":[");
+        for (int id = 0; id < 4; id++)
+        {
+            if (id > 0) json.Append(',');
+            bool available = generator.TryGetPoliceNetworkState(id, out bool active, out Vector3 position,
+                out Quaternion rotation, out bool chasing);
+            if (!available) active = false;
+            json.Append("{\"active\":").Append(active ? "true" : "false")
+                .Append(",\"p\":").Append(V3(position))
+                .Append(",\"r\":").Append(Q(rotation))
+                .Append(",\"chasing\":").Append(chasing ? "true" : "false").Append('}');
+        }
+        json.Append("]}");
+        SendRaw(json.ToString());
+    }
 
     public void Ping(int counter) => SendRaw($"{{\"t\":\"ping\",\"c\":{counter}}}");
     public void SendCommunication(int commandId, Vector3 position, Vector3 forward) =>

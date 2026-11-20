@@ -112,6 +112,11 @@ class Game:
         self.hack_deadline = 0.0
         self.traps: Dict[int, List[float]] = {}
         self.next_trap_id = 1
+        self.police_states = [
+            {"active": False, "p": [0.0, 0.0, 0.0],
+             "r": [0.0, 0.0, 0.0, 1.0], "chasing": False}
+            for _ in range(4)
+        ]
 
     @property
     def phase(self) -> str:
@@ -156,6 +161,7 @@ class Game:
             "hacked": [now < u for u in self.hacked_until],
             "doors": self.doors,
             "traps": [{"id": i, "p": p} for i, p in self.traps.items()],
+            "police": self.police_states,
         }
 
     def welcome(self, role: str) -> dict:
@@ -222,6 +228,29 @@ class Game:
                 return []  # dron inmovilizado: el servidor ignora el movimiento
             if p: self.hacker.p = p
             if r: self.hacker.r = r
+        return []
+
+    def _on_police_state(self, role, msg, now):
+        if role != "driver":
+            return self._deny("error", "solo el conductor sincroniza las patrullas")
+        incoming = msg.get("police")
+        if not isinstance(incoming, list):
+            return []
+
+        states = []
+        for index in range(4):
+            item = incoming[index] if index < len(incoming) else None
+            if not isinstance(item, dict):
+                states.append({"active": False, "p": [0.0, 0.0, 0.0],
+                               "r": [0.0, 0.0, 0.0, 1.0], "chasing": False})
+                continue
+            states.append({
+                "active": item.get("active") is True,
+                "p": _vec(item.get("p"), 3) or [0.0, 0.0, 0.0],
+                "r": _vec(item.get("r"), 4) or [0.0, 0.0, 0.0, 1.0],
+                "chasing": item.get("chasing") is True,
+            })
+        self.police_states = states
         return []
 
     # -- conductor
