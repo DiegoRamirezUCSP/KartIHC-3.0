@@ -210,11 +210,20 @@ public class VoicePowerUpInput : MonoBehaviour
         string[] keywords = new string[commands.Keys.Count];
         commands.Keys.CopyTo(keywords, 0);
 
-        // Se crea con el nivel mas permisivo y el filtro por confianza se aplica
-        // en OnPhraseRecognized, asi podemos registrar tambien lo que se descarta.
-        keywordRecognizer = new KeywordRecognizer(keywords, ConfidenceLevel.Rejected);
-        keywordRecognizer.OnPhraseRecognized += OnPhraseRecognized;
-        keywordRecognizer.Start();
+        // Rejected significa que Unity debe ignorar todas las frases. Se solicita
+        // Low para que el evento entregue las frases reconocidas; el umbral del
+        // Inspector se aplica después, en OnPhraseRecognized.
+        try
+        {
+            keywordRecognizer = new KeywordRecognizer(keywords, ConfidenceLevel.Low);
+            keywordRecognizer.OnPhraseRecognized += OnPhraseRecognized;
+            keywordRecognizer.Start();
+            Debug.Log($"[Voz] Reconocedor iniciado con {keywords.Length} comandos; filtro de confianza: {minimumConfidence}.");
+        }
+        catch (Exception exception)
+        {
+            Debug.LogError($"[Voz] No se pudo iniciar el reconocedor de Windows: {exception.Message}");
+        }
 #else
         Debug.LogWarning("VoicePowerUpInput necesita un plugin o puente nativo para reconocimiento de voz en Android/iOS.");
 #endif
