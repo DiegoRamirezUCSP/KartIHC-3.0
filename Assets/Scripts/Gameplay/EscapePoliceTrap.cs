@@ -30,6 +30,8 @@ public sealed class EscapePoliceTrap : MonoBehaviour
     {
         KartIHC.Kart.KartController kart = other.GetComponentInParent<KartIHC.Kart.KartController>();
         if (kart == null) return;
+        // The host copy applies the effect; non-host copies are visual predictions.
+        if (station != null && !station.IsAuthoritative) return;
         if (!kart.IsShielded)
         {
             kart.ApplyPoliceTrapEffect(StunSeconds);

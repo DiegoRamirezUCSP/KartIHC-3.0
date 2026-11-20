@@ -214,7 +214,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
     private void HandleCancelTutorialVoice()
     {
         if (SceneManager.GetActiveScene().name == EscapeSceneName &&
-            EscapePoliceStationGenerator.Instance != null)
+            EscapePoliceStationGenerator.Instance != null && EscapePoliceStationGenerator.Instance.IsSoloMode)
         {
             ReturnToModeMenu();
             return;
@@ -232,7 +232,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
         GameStateManager activeStateManager = FindFirstObjectByType<GameStateManager>();
         if (activeStateManager != null && activeStateManager.CurrentState == GameState.Tutorial) return;
 
-        if (EscapePoliceStationGenerator.Instance != null)
+        if (EscapePoliceStationGenerator.Instance != null && EscapePoliceStationGenerator.Instance.IsSoloMode)
         {
             EscapeModeNetworkBridge.Stop();
             soloEscapeAfterSceneLoad = true;
@@ -354,7 +354,7 @@ public sealed class EscapeModeMenuSelector : MonoBehaviour
 
         if (SceneManager.GetActiveScene().name == "EscapeCourse")
         {
-            if (EscapePoliceStationGenerator.Instance != null)
+            if (EscapePoliceStationGenerator.Instance != null && EscapePoliceStationGenerator.Instance.IsSoloMode)
             {
                 ReturnToModeMenu();
                 return;

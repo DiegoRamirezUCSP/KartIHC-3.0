@@ -208,8 +208,10 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
             RefreshHackerTargets();
         }
 
-        if (isHost && practice && kart != null)
-            EscapePoliceStationGenerator.StartForSolo(kart, this);
+        // Build the station and local patrol presentation for both roles in
+        // cooperative Escape. Escape Solo additionally uses its own exit rules.
+        if (kart != null && (!practice || isHost))
+            EscapePoliceStationGenerator.StartForEscape(kart, this, isHost, practice && isHost);
 
         RegisterMessagesWhenReady();
         BindVoiceInput();

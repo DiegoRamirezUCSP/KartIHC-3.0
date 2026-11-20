@@ -278,7 +278,7 @@ namespace KartIHC.UI
             if (objectName.StartsWith("EscapeInnerBarrier_") || objectName.StartsWith("EscapeOuterBarrier_")) return 2;
             for (Transform parent = target.parent; parent != null; parent = parent.parent)
             {
-                if (parent.name != "EscapeSoloCityTestArea") continue;
+                if (parent.name != "EscapePoliceStationArea" && parent.name != "EscapeSoloCityTestArea") continue;
                 if (objectName.StartsWith("ExitRoadLine")) return -1;
                 return objectName.Contains("Wall") ? 2 : objectName == "ExitRoad" ? 1 : 0;
             }

@@ -1,8 +1,9 @@
 using System.Collections.Generic;
 using KartIHC.Kart;
+using KartIHC.UI;
 using UnityEngine;
 
-/// <summary>Builds a local police station, four patrol cars and an exit test spur for Escape Solo.</summary>
+/// <summary>Builds the police station and four patrols for Escape. Gameplay effects are host-authoritative.</summary>
 public sealed class EscapePoliceStationGenerator : MonoBehaviour
 {
     private const int PatrolCount = 4;
@@ -11,6 +12,9 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const float RespawnDelay = 20f;
     private const float PatrolSpeed = 7f;
     private const float ChaseSpeed = 8.5f;
+    private const float OutsidePatrolRadius = 36f;
+    private const float OuterBarrierRadius = 33.5f;
+    private const float DoorRouteReachDistance = 1.8f;
     private static EscapePoliceStationGenerator instance;
 
     [SerializeField, Tooltip("Distancia máxima a la que una patrulla detecta el kart.")] private float visionRange = 38f;
@@ -19,23 +23,35 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     [SerializeField, Range(20f, 31f)] private float patrolRoadRadius = 25.5f;
     private readonly List<EscapePoliceCar> patrols = new List<EscapePoliceCar>();
     private readonly float[] respawnAt = new float[PatrolCount];
+    private readonly int[] doorSearchCursor = new int[PatrolCount];
+    private readonly int[] activeDoorIds = { -1, -1, -1, -1 };
+    // 0 = no door route, 1 = inside approach, 2 = crossing outward,
+    // 3 = outside approach, 4 = crossing inward.
+    private readonly int[] doorTraversalPhase = new int[PatrolCount];
+    private readonly float[] nextDoorSearchAt = new float[PatrolCount];
+    private readonly RaycastHit[] obstructionHits = new RaycastHit[16];
     private readonly List<EscapePoliceTrap> traps = new List<EscapePoliceTrap>();
     private KartController kart;
     private EscapeModeNetworkBridge session;
+    private bool authoritative;
+    private bool soloRules;
     private Vector3[] stationSpawns;
     private readonly HashSet<GameObject> openedBarriers = new HashSet<GameObject>();
     private readonly List<EscapeFinishZone> openedFinishZones = new List<EscapeFinishZone>();
     private readonly List<EscapeDoor> hiddenDoors = new List<EscapeDoor>();
 
     public static EscapePoliceStationGenerator Instance => instance;
+    public bool IsAuthoritative => authoritative;
+    public bool IsSoloMode => soloRules;
 
-    public static void StartForSolo(KartController targetKart, EscapeModeNetworkBridge bridge)
+    public static void StartForEscape(KartController targetKart, EscapeModeNetworkBridge bridge,
+        bool hasAuthority, bool useSoloRules)
     {
         if (targetKart == null) return;
         Stop();
-        GameObject root = new GameObject("EscapeSoloPoliceSystem");
+        GameObject root = new GameObject("EscapePoliceSystem");
         instance = root.AddComponent<EscapePoliceStationGenerator>();
-        instance.Initialize(targetKart, bridge);
+        instance.Initialize(targetKart, bridge, hasAuthority, useSoloRules);
     }
 
     public static void Stop()
@@ -49,14 +65,21 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         }
     }
 
-    private void Initialize(KartController targetKart, EscapeModeNetworkBridge bridge)
+    private void Initialize(KartController targetKart, EscapeModeNetworkBridge bridge,
+        bool hasAuthority, bool useSoloRules)
     {
         kart = targetKart;
         session = bridge;
-        HideEscapeDoors();
-        BuildExitSpurAndStation();
+        authoritative = hasAuthority;
+        soloRules = useSoloRules;
+        if (soloRules) HideEscapeDoors();
+        BuildExitSpurAndStation(soloRules);
         SpawnPatrols();
         OpenOuterBoundary();
+        EscapeMinimap.RegisterMarkerSource(AddMinimapMarkers);
+        string roleLabel = authoritative ? "autoridad del conductor" : "presentación local del hacker";
+        Debug.Log($"[EscapePolice] Comisaría activa con {patrols.Count} patrullas ({roleLabel}).");
+        EscapeModeHudFeed.Publish($"Comisaría activa · {patrols.Count} patrullas.");
     }
 
     private void Update()
@@ -84,11 +107,27 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             police.StopChase();
         }
 
-        // A chase speeds up the patrol along its assigned lane. It never
-        // steers directly at the kart, so police cannot cut across the track.
-        Vector3 destination = police.Route[police.WaypointIndex];
+        police.SelectPatrolRing(IsOutsideOuterBarrier(police.transform.position));
+
+        // Try an open gate first. If the approach is blocked or the gate is
+        // closed, move to another gate; when none are available, keep circling.
+        bool followingDoor = TryGetDoorRoute(police, out Vector3 destination);
+        if (!followingDoor)
+        {
+            // A chase speeds up the patrol along its assigned lane. It never
+            // steers directly at the kart, so police cannot cut across the track.
+            Vector3[] route = police.Route;
+            int waypoint = police.WaypointIndex;
+            if (IsPathBlocked(police, route[waypoint]) &&
+                TryFindClearRouteWaypoint(police, out int alternativeWaypoint))
+            {
+                police.SetWaypointIndex(alternativeWaypoint);
+                waypoint = alternativeWaypoint;
+            }
+            destination = route[waypoint];
+        }
         destination.y = police.transform.position.y;
-        if (Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
+        if (!followingDoor && Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
             police.AdvanceWaypoint();
         if (!police.IsChasing && police.ShouldDropTrap) DropPoliceTrap(police);
 
@@ -105,7 +144,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         policeBody.position = police.transform.position;
         policeBody.rotation = police.transform.rotation;
 
-        if ((kart.transform.position - police.transform.position).sqrMagnitude < 2.6f * 2.6f)
+        if (authoritative && (kart.transform.position - police.transform.position).sqrMagnitude < 2.6f * 2.6f)
             HandlePoliceCollision(police, kart);
     }
 
@@ -157,6 +196,247 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         return patrolRoute;
     }
 
+    private static Vector3[] BuildOuterPatrolRoute()
+    {
+        const int segments = 48;
+        Vector3[] patrolRoute = new Vector3[segments];
+        for (int i = 0; i < segments; i++)
+        {
+            float angle = Mathf.PI * 2f * i / segments;
+            patrolRoute[i] = new Vector3(Mathf.Sin(angle) * OutsidePatrolRadius, 0.55f,
+                Mathf.Cos(angle) * OutsidePatrolRadius);
+        }
+        return patrolRoute;
+    }
+
+    private bool TryGetDoorRoute(EscapePoliceCar police, out Vector3 destination)
+    {
+        destination = default;
+        IReadOnlyList<EscapeDoor> doors = EscapeCourseBuilder.Doors;
+        int patrolId = police.PatrolId;
+        if (doors.Count == 0 || patrolId < 0 || patrolId >= PatrolCount) return false;
+
+        int activeDoorIndex = FindDoorIndexById(doors, activeDoorIds[patrolId]);
+        if (doorTraversalPhase[patrolId] != 0)
+        {
+            if (activeDoorIndex < 0 || !doors[activeDoorIndex].IsOpen)
+            {
+                AdvanceDoorSearch(police, doors, activeDoorIndex);
+                return false;
+            }
+
+            EscapeDoor activeDoor = doors[activeDoorIndex];
+            if (doorTraversalPhase[patrolId] == 3)
+            {
+                destination = GetOutsideDoorApproachWaypoint(police, DoorRoutePoint(activeDoor, 3), out bool reachedApproach);
+                if (reachedApproach)
+                {
+                    doorTraversalPhase[patrolId] = 4;
+                    destination = DoorRoutePoint(activeDoor, 4);
+                    if (IsPathBlocked(police, destination))
+                    {
+                        AdvanceDoorSearch(police, doors, activeDoorIndex);
+                        return false;
+                    }
+                }
+                return true;
+            }
+
+            if (doorTraversalPhase[patrolId] == 4)
+            {
+                destination = DoorRoutePoint(activeDoor, 4);
+                if (IsPathBlocked(police, destination))
+                {
+                    AdvanceDoorSearch(police, doors, activeDoorIndex);
+                    return false;
+                }
+                if ((destination - police.transform.position).sqrMagnitude <= DoorRouteReachDistance * DoorRouteReachDistance)
+                {
+                    doorTraversalPhase[patrolId] = 0;
+                    activeDoorIds[patrolId] = -1;
+                    doorSearchCursor[patrolId] = (activeDoorIndex + 1) % doors.Count;
+                    nextDoorSearchAt[patrolId] = Time.time + 0.5f;
+                    return false;
+                }
+                return true;
+            }
+
+            destination = DoorRoutePoint(activeDoor, doorTraversalPhase[patrolId]);
+            if (IsPathBlocked(police, destination))
+            {
+                AdvanceDoorSearch(police, doors, activeDoorIndex);
+                return false;
+            }
+
+            if ((destination - police.transform.position).sqrMagnitude <= DoorRouteReachDistance * DoorRouteReachDistance)
+            {
+                if (doorTraversalPhase[patrolId] == 1)
+                    doorTraversalPhase[patrolId] = 2;
+                else
+                {
+                    doorTraversalPhase[patrolId] = 0;
+                    activeDoorIds[patrolId] = -1;
+                    doorSearchCursor[patrolId] = (activeDoorIndex + 1) % doors.Count;
+                    nextDoorSearchAt[patrolId] = Time.time + 0.5f;
+                    return false;
+                }
+
+                destination = DoorRoutePoint(activeDoor, doorTraversalPhase[patrolId]);
+                if (IsPathBlocked(police, destination))
+                {
+                    AdvanceDoorSearch(police, doors, activeDoorIndex);
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        if (Time.time < nextDoorSearchAt[patrolId]) return false;
+        for (int offset = 0; offset < doors.Count; offset++)
+        {
+            int candidateIndex = (doorSearchCursor[patrolId] + offset) % doors.Count;
+            EscapeDoor candidate = doors[candidateIndex];
+            if (candidate == null || !candidate.IsOpen) continue;
+
+            bool outside = IsOutsideOuterBarrier(police.transform.position);
+            int phase = outside ? 3 : 1;
+            Vector3 approach = DoorRoutePoint(candidate, phase);
+            if (!outside && IsPathBlocked(police, approach)) continue;
+
+            doorSearchCursor[patrolId] = candidateIndex;
+            activeDoorIds[patrolId] = candidate.Id;
+            doorTraversalPhase[patrolId] = phase;
+            if (outside)
+                destination = GetOutsideDoorApproachWaypoint(police, approach, out _);
+            else
+                destination = approach;
+            return true;
+        }
+
+        // Keep patrolling while the gates are closed, then scan again shortly.
+        nextDoorSearchAt[patrolId] = Time.time + 1f;
+        return false;
+    }
+
+    private static int FindDoorIndexById(IReadOnlyList<EscapeDoor> doors, int doorId)
+    {
+        for (int i = 0; i < doors.Count; i++)
+            if (doors[i] != null && doors[i].Id == doorId) return i;
+        return -1;
+    }
+
+    private Vector3 GetOutsideDoorApproachWaypoint(EscapePoliceCar police, Vector3 doorPoint,
+        out bool reachedApproach)
+    {
+        Vector3[] route = police.Route;
+        int targetIndex = 0;
+        float nearestTarget = float.PositiveInfinity;
+        for (int i = 0; i < route.Length; i++)
+        {
+            Vector3 delta = route[i] - doorPoint;
+            delta.y = 0f;
+            if (delta.sqrMagnitude >= nearestTarget) continue;
+            nearestTarget = delta.sqrMagnitude;
+            targetIndex = i;
+        }
+
+        Vector3 toDoor = doorPoint - police.transform.position;
+        toDoor.y = 0f;
+        if (toDoor.sqrMagnitude <= 2.2f * 2.2f)
+        {
+            reachedApproach = true;
+            return doorPoint;
+        }
+
+        reachedApproach = false;
+        int current = police.WaypointIndex;
+        int forwardDistance = (targetIndex - current + route.Length) % route.Length;
+        int reverseDistance = (current - targetIndex + route.Length) % route.Length;
+        int next = forwardDistance <= reverseDistance
+            ? (current + 1) % route.Length
+            : (current - 1 + route.Length) % route.Length;
+        if (IsPathBlocked(police, route[next]) && TryFindClearRouteWaypoint(police, out int alternative))
+            next = alternative;
+        police.SetWaypointIndex(next);
+        return route[next];
+    }
+
+    private static Vector3 DoorRoutePoint(EscapeDoor door, int phase)
+    {
+        Vector3 center = door.transform.position;
+        Vector3 outward = new Vector3(center.x, 0f, center.z).normalized;
+        Vector3 groundCenter = new Vector3(center.x, 0.55f, center.z);
+        return phase switch
+        {
+            1 => groundCenter - outward * 5.5f,
+            2 => groundCenter + outward * 4f,
+            3 => groundCenter + outward * 4f,
+            _ => groundCenter - outward * 5.5f
+        };
+    }
+
+    private void AdvanceDoorSearch(EscapePoliceCar police, IReadOnlyList<EscapeDoor> doors, int currentDoorIndex)
+    {
+        int patrolId = police.PatrolId;
+        doorTraversalPhase[patrolId] = 0;
+        activeDoorIds[patrolId] = -1;
+        doorSearchCursor[patrolId] = currentDoorIndex >= 0
+            ? (currentDoorIndex + 1) % doors.Count
+            : (doorSearchCursor[patrolId] + 1) % doors.Count;
+        nextDoorSearchAt[patrolId] = Time.time + 0.35f;
+    }
+
+    private bool TryFindClearRouteWaypoint(EscapePoliceCar police, out int waypointIndex)
+    {
+        Vector3[] route = police.Route;
+        int current = police.WaypointIndex;
+        for (int offset = 1; offset < route.Length; offset++)
+        {
+            int forward = (current + offset) % route.Length;
+            if (!IsPathBlocked(police, route[forward]))
+            {
+                waypointIndex = forward;
+                return true;
+            }
+
+            int reverse = (current - offset + route.Length) % route.Length;
+            if (!IsPathBlocked(police, route[reverse]))
+            {
+                waypointIndex = reverse;
+                return true;
+            }
+        }
+
+        waypointIndex = current;
+        return false;
+    }
+
+    private bool IsPathBlocked(EscapePoliceCar police, Vector3 destination)
+    {
+        Vector3 origin = police.transform.position + Vector3.up * 0.65f;
+        Vector3 target = destination + Vector3.up * 0.65f;
+        Vector3 delta = target - origin;
+        float distance = delta.magnitude;
+        if (distance < 0.1f) return false;
+
+        int hitCount = Physics.SphereCastNonAlloc(origin, 0.55f, delta / distance, obstructionHits,
+            distance, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+        for (int i = 0; i < hitCount; i++)
+        {
+            Collider hitCollider = obstructionHits[i].collider;
+            if (hitCollider == null || hitCollider.GetComponentInParent<EscapePoliceCar>() == police ||
+                hitCollider.GetComponentInParent<KartController>() == kart)
+                continue;
+            return true;
+        }
+        return false;
+    }
+
+    private static bool IsOutsideOuterBarrier(Vector3 position)
+    {
+        return new Vector2(position.x, position.z).magnitude > OuterBarrierRadius;
+    }
+
     private void SpawnPatrols()
     {
         stationSpawns = new Vector3[PatrolCount];
@@ -187,7 +467,12 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         body.useGravity = false;
         EscapePoliceCar police = root.AddComponent<EscapePoliceCar>();
         CreatePoliceVisual(root.transform);
-        police.Initialize(this, id, BuildPatrolRoute(stationSpawns[id]), 0, stationSpawns[id], true);
+        police.Initialize(this, id, BuildPatrolRoute(stationSpawns[id]), BuildOuterPatrolRoute(),
+            0, stationSpawns[id], true);
+        doorSearchCursor[id] = id % Mathf.Max(1, EscapeCourseBuilder.Doors.Count);
+        activeDoorIds[id] = -1;
+        doorTraversalPhase[id] = 0;
+        nextDoorSearchAt[id] = Time.time + id * 0.2f;
         patrols[id] = police;
         respawnAt[id] = float.PositiveInfinity;
     }
@@ -206,9 +491,9 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             new Color(0.1f, 0.1f, 0.12f));
     }
 
-    private void BuildExitSpurAndStation()
+    private void BuildExitSpurAndStation(bool includeSoloExit)
     {
-        GameObject city = new GameObject("EscapeSoloCityTestArea");
+        GameObject city = new GameObject("EscapePoliceStationArea");
         city.transform.SetParent(transform, true);
         CreateBox(city.transform, "ExitRoad", new Vector3(0f, -0.12f, 44f), new Vector3(12f, 0.2f, 32f),
             new Color(0.17f, 0.18f, 0.2f));
@@ -230,24 +515,26 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             new Color(0.12f, 0.14f, 0.17f));
         CreateText(city.transform, "POLICIA · GENERADOR", new Vector3(0f, 5.4f, 59.0f), 0.55f,
             new Color(0.96f, 0.97f, 1f));
-        CreateBox(city.transform, "ExitFinishStripe", new Vector3(0f, 0.02f, 48f), new Vector3(11.8f, 0.05f, 0.65f),
-            new Color(1f, 0.7f, 0.06f));
-        GameObject finish = new GameObject("EscapeSoloExitFinish");
-        finish.transform.SetParent(city.transform, true);
-        finish.transform.position = new Vector3(0f, 1f, 49f);
-        BoxCollider trigger = finish.AddComponent<BoxCollider>();
-        trigger.isTrigger = true;
-        trigger.size = new Vector3(11.5f, 3f, 2f);
-        finish.AddComponent<EscapeFinishZone>();
-
-        // The authored circular finish remains active for network Escape;
-        // in Solo the player must reach this separate exit lane to win.
-        EscapeFinishZone[] authoredFinishZones = FindObjectsByType<EscapeFinishZone>(FindObjectsSortMode.None);
-        foreach (EscapeFinishZone authoredFinish in authoredFinishZones)
+        if (includeSoloExit)
         {
-            if (authoredFinish.gameObject.name != "EscapeFinishZone") continue;
-            authoredFinish.enabled = false;
-            openedFinishZones.Add(authoredFinish);
+            CreateBox(city.transform, "ExitFinishStripe", new Vector3(0f, 0.02f, 48f), new Vector3(11.8f, 0.05f, 0.65f),
+                new Color(1f, 0.7f, 0.06f));
+            GameObject finish = new GameObject("EscapeSoloExitFinish");
+            finish.transform.SetParent(city.transform, true);
+            finish.transform.position = new Vector3(0f, 1f, 49f);
+            BoxCollider trigger = finish.AddComponent<BoxCollider>();
+            trigger.isTrigger = true;
+            trigger.size = new Vector3(11.5f, 3f, 2f);
+            finish.AddComponent<EscapeFinishZone>();
+
+            // Solo uses this test lane; cooperative Escape keeps its authored finish.
+            EscapeFinishZone[] authoredFinishZones = FindObjectsByType<EscapeFinishZone>(FindObjectsSortMode.None);
+            foreach (EscapeFinishZone authoredFinish in authoredFinishZones)
+            {
+                if (authoredFinish.gameObject.name != "EscapeFinishZone") continue;
+                authoredFinish.enabled = false;
+                openedFinishZones.Add(authoredFinish);
+            }
         }
 
     }
@@ -271,8 +558,36 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
     private void OnDestroy()
     {
+        EscapeMinimap.UnregisterMarkerSource(AddMinimapMarkers);
         RestoreSceneObjects();
         if (instance == this) instance = null;
+    }
+
+    private void AddMinimapMarkers(List<EscapeMinimap.Marker> output)
+    {
+        foreach (EscapePoliceCar patrol in patrols)
+        {
+            if (patrol == null) continue;
+            output.Add(new EscapeMinimap.Marker
+            {
+                Position = patrol.transform.position,
+                Shape = EscapeMinimap.MarkerShape.Dot,
+                Color = patrol.IsChasing ? new Color(1f, 0.12f, 0.08f) : new Color(0.9f, 0.55f, 0.12f),
+                SizePixels = 9f
+            });
+        }
+
+        foreach (EscapePoliceTrap trap in traps)
+        {
+            if (trap == null) continue;
+            output.Add(new EscapeMinimap.Marker
+            {
+                Position = trap.transform.position,
+                Shape = EscapeMinimap.MarkerShape.Checker,
+                Color = new Color(1f, 0.2f, 0.08f),
+                SizePixels = 7f
+            });
+        }
     }
 
     private void RestoreSceneObjects()
@@ -352,7 +667,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
     public void HandlePoliceCollision(EscapePoliceCar police, KartController collidedKart)
     {
-        if (police == null || collidedKart == null || session == null || session.HasLost || session.HasWon) return;
+        if (!authoritative || police == null || collidedKart == null || session == null || session.HasLost || session.HasWon) return;
         if (collidedKart.IsShielded)
         {
             EliminatePolice(police, "El escudo eliminó una patrulla.");
@@ -363,7 +678,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
     public void EliminatePolice(EscapePoliceCar police, string message)
     {
-        if (police == null || police.PatrolId < 0 || police.PatrolId >= patrols.Count) return;
+        if (!authoritative || police == null || police.PatrolId < 0 || police.PatrolId >= patrols.Count) return;
         int id = police.PatrolId;
         if (patrols[id] != police) return;
         patrols[id] = null;
