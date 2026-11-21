@@ -31,14 +31,13 @@ namespace KartIHC.UI
             if (toasts.Count > MaxToasts) toasts.RemoveAt(0);
         }
 
-        private enum OverlayKind { None, Prompt, Waiting, Minigame, Locked }
+        private enum OverlayKind { None, Prompt, Waiting, Minigame }
 
         private static OverlayKind CurrentOverlay(EscapeModeNetworkBridge bridge, EscapeHazardDirector director)
         {
             if (bridge == null || director == null || !bridge.IsHacker) return OverlayKind.None;
             if (director.MinigameActive) return OverlayKind.Minigame;
             if (director.AwaitingServer) return OverlayKind.Waiting;
-            if (director.DroneLock.FallbackLocked && !bridge.DroneLocked) return OverlayKind.Locked;
             if (director.Target != null && !bridge.HackMinigameActive && !bridge.DroneLocked) return OverlayKind.Prompt;
             return OverlayKind.None;
         }
@@ -87,11 +86,6 @@ namespace KartIHC.UI
                     string name = director.AwaitingObstacle != null ? director.AwaitingObstacle.DisplayName.ToUpperInvariant() : "OBSTÁCULO";
                     GUI.Label(new Rect(panel.x + 12f, panel.y + 17f, panel.width - 24f, 38f), $"HACKEO · {name}", titleStyle);
                     GUI.Label(new Rect(panel.x + 12f, panel.y + 57f, panel.width - 24f, 30f), "Esperando confirmación del servidor...", infoStyle);
-                    break;
-                case OverlayKind.Locked:
-                    GUI.Label(new Rect(panel.x + 12f, panel.y + 17f, panel.width - 24f, 38f), "DRON BLOQUEADO", titleStyle);
-                    GUI.Label(new Rect(panel.x + 12f, panel.y + 57f, panel.width - 24f, 30f),
-                        $"Vuelo y hackeo de obstáculos disponibles en {director.DroneLock.FallbackSecondsRemaining:0.0} s", infoStyle);
                     break;
                 case OverlayKind.Minigame:
                     DrawMinigame(panel, director);
