@@ -969,6 +969,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         droneCamera.fieldOfView = 60f;
         droneCamera.nearClipPlane = 0.1f;
         droneCamera.enabled = true;
+        UnityEngine.Rendering.Universal.CameraExtensions.GetUniversalAdditionalCameraData(droneCamera).renderPostProcessing = true;
         status = "Dron activo · WASD mueve, Q/E altura, botón derecho del ratón mira, rueda acerca y mantén H o clic izquierdo para hackear";
         EscapeModeHudFeed.Publish(status);
     }
