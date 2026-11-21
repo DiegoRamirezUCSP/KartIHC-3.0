@@ -923,6 +923,21 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         EscapeModeHudFeed.Publish(status);
     }
 
+    /// <summary>
+    /// Bloquea el dron del hacker 'seconds' segundos con el mismo bloqueo y overlay
+    /// "DRON BLOQUEADO" que un hackeo fallido. Estado local del hacker: no envía mensajes.
+    /// </summary>
+    public void ImmobilizeDrone(float seconds, string reason)
+    {
+        if (!isHacker || seconds <= 0f) return;
+        hackMinigameActive = false;
+        hackDoorId = -1;
+        hackPatternProgress = 0;
+        droneLockedUntil = Mathf.Max(droneLockedUntil, Time.unscaledTime + seconds);
+        status = string.IsNullOrEmpty(reason) ? $"Dron bloqueado por {seconds:0} s" : reason;
+        EscapeModeHudFeed.Publish(status);
+    }
+
     private void CreateReconDrone()
     {
         if (savedGameplayCamera == null) savedGameplayCamera = Camera.main;
