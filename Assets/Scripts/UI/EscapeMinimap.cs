@@ -58,6 +58,10 @@ namespace KartIHC.UI
         // Mismo alcance que EscapeModeNetworkBridge.DoorHackRangeMeters (privado allí).
         private const float DoorHackRangeMeters = 7f;
         private const int MapResolution = 256;
+        private const int RouteMapResolution = 512;     // con la ruta por la ciudad (zona ~220 m)
+        private const float RouteViewMeters = 120f;     // ventana centrada en el kart cuando va por la ruta
+        private const float ViewBlendSpeed = 4f;
+        private const float KartOnRouteFrom = 4f;
         private const float WorldPadding = 4f;
         // GameHUD (esquina superior izquierda, sin escalar): 16 px de margen +
         // 4 filas de fontSize 30 * 1.4 + 24 = 208 px. Se deja un poco de aire.
@@ -113,7 +117,10 @@ namespace KartIHC.UI
         private Texture2D triangleTexture;
         private Texture2D circleTexture;
         private Texture2D ringTexture;
-        private Rect worldRect;
+        private Rect worldRect;      // zona que cubre la textura
+        private Rect ringViewRect;   // encuadre del anillo (como antes de la ruta)
+        private Rect viewRect;       // lo que se dibuja ahora
+        private int mapResolution = MapResolution;
         private bool mapBuilt;
         private bool builtWithPolice;
         private EscapeModeNetworkBridge builtForBridge;
@@ -264,6 +271,8 @@ namespace KartIHC.UI
 
         private void BuildMapTexture()
         {
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            mapResolution = route != null ? RouteMapResolution : MapResolution;
             var sources = new List<(MeshRenderer renderer, int layer)>();
             bool hasBounds = false;
             Bounds bounds = default;
@@ -278,6 +287,7 @@ namespace KartIHC.UI
             }
             foreach (EscapeFinishZone finish in FindObjectsByType<EscapeFinishZone>(FindObjectsSortMode.None))
             {
+                if (route != null && route.Contains(finish.transform.position, 2f)) continue; // la meta de la ruta va con la ruta
                 if (!hasBounds) { bounds = new Bounds(finish.transform.position, Vector3.one); hasBounds = true; }
                 else bounds.Encapsulate(finish.transform.position);
             }
@@ -296,21 +306,48 @@ namespace KartIHC.UI
                     bounds.Encapsulate(max);
                 }
             }
+            // Encuadre del anillo (sin la ruta): es la vista mientras el kart no va por la ruta.
+            ringViewRect = SquareRect(hasBounds ? bounds : new Bounds(Vector3.zero, new Vector3(80f, 1f, 80f)));
+            // Ruta por la ciudad (KartIHC/City/Route On∕Off): la textura la abarca entera, plaza incluida.
+            if (route != null)
+            {
+                if (route.HasPlaza)
+                {
+                    Rect plaza = route.Plaza;
+                    bounds.Encapsulate(new Vector3(plaza.xMin, 0f, plaza.yMin));
+                    bounds.Encapsulate(new Vector3(plaza.xMax, 0f, plaza.yMax));
+                }
+                for (int i = 0; i < route.PointCount; i++)
+                {
+                    Vector3 point = route.GetPoint(i);
+                    var extent = new Vector3(route.HalfWidth, 0f, route.HalfWidth);
+                    if (!hasBounds) { bounds = new Bounds(point, Vector3.zero); hasBounds = true; }
+                    bounds.Encapsulate(point - extent);
+                    bounds.Encapsulate(point + extent);
+                }
+            }
             if (!hasBounds) bounds = new Bounds(Vector3.zero, new Vector3(80f, 1f, 80f));
 
-            float span = Mathf.Max(bounds.size.x, bounds.size.z) + WorldPadding * 2f;
-            worldRect = new Rect(bounds.center.x - span * 0.5f, bounds.center.z - span * 0.5f, span, span);
+            worldRect = SquareRect(bounds);
+            float span = worldRect.width;
+            if (route == null) ringViewRect = worldRect;
+            viewRect = ringViewRect;
 
+            if (mapTexture != null && mapTexture.width != mapResolution)
+            {
+                Destroy(mapTexture);
+                mapTexture = null;
+            }
             if (mapTexture == null)
             {
-                mapTexture = new Texture2D(MapResolution, MapResolution, TextureFormat.RGBA32, false)
+                mapTexture = new Texture2D(mapResolution, mapResolution, TextureFormat.RGBA32, false)
                 {
                     wrapMode = TextureWrapMode.Clamp,
                     filterMode = FilterMode.Bilinear
                 };
             }
-            var pixels = new Color32[MapResolution * MapResolution];
-            float texel = span / MapResolution;
+            var pixels = new Color32[mapResolution * mapResolution];
+            float texel = span / mapResolution;
             // Manzanas y comisaría de la ciudad generada al fondo.
             if (city != null)
             {
@@ -324,6 +361,16 @@ namespace KartIHC.UI
                 Color32 color = layer == 0 ? CityColor : layer == 1 ? RoadColor : BarrierColor;
                 foreach ((MeshRenderer renderer, int sourceLayer) in sources)
                     if (sourceLayer == layer) RasterizeBox(renderer, pixels, color, texel);
+                if (route != null && layer == 1)
+                {
+                    FillRoute(pixels, route, color, texel, -1f, route.HalfWidth);
+                    if (route.HasPlaza) FillWorldRect(pixels, route.Plaza, color, texel);
+                }
+                if (route != null && layer == 2)
+                {
+                    FillRoute(pixels, route, color, texel, route.HalfWidth - 0.45f, route.HalfWidth + 0.45f);
+                    FillRingClosure(pixels, route, color, texel);
+                }
             }
             mapTexture.SetPixels32(pixels);
             mapTexture.Apply();
@@ -345,6 +392,56 @@ namespace KartIHC.UI
             return -1;
         }
 
+        /// <summary>
+        /// Pinta los texels cuya distancia a la línea central de la ruta está entre minLateral y
+        /// maxLateral (calzada: −1..ancho/2; muros: el borde). Fuera del anillo solamente.
+        /// </summary>
+        private void FillRoute(Color32[] pixels, EscapeRouteDefinition route, Color32 color, float texel,
+            float minLateral, float maxLateral)
+        {
+            var area = new Rect();
+            for (int i = 0; i < route.PointCount; i++)
+            {
+                Vector3 p = route.GetPoint(i);
+                var r = Rect.MinMaxRect(p.x - maxLateral, p.z - maxLateral, p.x + maxLateral, p.z + maxLateral);
+                area = i == 0 ? r : Rect.MinMaxRect(Mathf.Min(area.xMin, r.xMin), Mathf.Min(area.yMin, r.yMin),
+                    Mathf.Max(area.xMax, r.xMax), Mathf.Max(area.yMax, r.yMax));
+            }
+            float ringOuter = EscapeTrackGeometry.OuterRadius + 0.4f;
+            ForTexels(area, texel, (x, y, world) =>
+            {
+                if (new Vector2(world.x, world.z).magnitude < ringOuter) return;
+                route.Project(world, out float lateral);
+                if (minLateral > 0f && route.InPlaza(world, -0.5f)) return; // la plaza no lleva muros interiores
+                if (lateral > minLateral && lateral <= maxLateral) pixels[y * mapResolution + x] = color;
+            });
+        }
+
+        /// <summary>Cierre de la apertura norte del anillo a ambos lados del carril de la ruta (muros de la ruta).</summary>
+        private void FillRingClosure(Color32[] pixels, EscapeRouteDefinition route, Color32 color, float texel)
+        {
+            float outer = EscapeTrackGeometry.OuterRadius;
+            ForTexels(Rect.MinMaxRect(-outer - 1f, 0f, outer + 1f, outer + 1f), texel, (x, y, world) =>
+            {
+                float radius = new Vector2(world.x, world.z).magnitude;
+                float angle = Mathf.Atan2(world.z, world.x) * Mathf.Rad2Deg;
+                if (Mathf.Abs(radius - outer) <= 0.45f && angle > 52.5f && angle < 127.5f &&
+                    Mathf.Abs(world.x) > route.HalfWidth)
+                    pixels[y * mapResolution + x] = color;
+            });
+        }
+
+        private void ForTexels(Rect area, float texel, Action<int, int, Vector3> visit)
+        {
+            int minX = Mathf.Clamp(Mathf.FloorToInt((area.xMin - worldRect.x) / texel), 0, mapResolution - 1);
+            int maxX = Mathf.Clamp(Mathf.CeilToInt((area.xMax - worldRect.x) / texel), 0, mapResolution - 1);
+            int minY = Mathf.Clamp(Mathf.FloorToInt((area.yMin - worldRect.y) / texel), 0, mapResolution - 1);
+            int maxY = Mathf.Clamp(Mathf.CeilToInt((area.yMax - worldRect.y) / texel), 0, mapResolution - 1);
+            for (int y = minY; y <= maxY; y++)
+                for (int x = minX; x <= maxX; x++)
+                    visit(x, y, new Vector3(worldRect.x + (x + 0.5f) * texel, 0f, worldRect.y + (y + 0.5f) * texel));
+        }
+
         /// <summary>Rellena un rectángulo del mundo (x, z) alineado con los ejes.</summary>
         private void FillWorldRect(Color32[] pixels, Rect area, Color32 color, float texel)
         {
@@ -352,12 +449,12 @@ namespace KartIHC.UI
             int maxX = Mathf.CeilToInt((area.xMax - worldRect.x) / texel) - 1;
             int minY = Mathf.FloorToInt((area.yMin - worldRect.y) / texel);
             int maxY = Mathf.CeilToInt((area.yMax - worldRect.y) / texel) - 1;
-            if (maxX < 0 || maxY < 0 || minX >= MapResolution || minY >= MapResolution) return;
+            if (maxX < 0 || maxY < 0 || minX >= mapResolution || minY >= mapResolution) return;
             minX = Mathf.Max(0, minX); minY = Mathf.Max(0, minY);
-            maxX = Mathf.Min(MapResolution - 1, maxX); maxY = Mathf.Min(MapResolution - 1, maxY);
+            maxX = Mathf.Min(mapResolution - 1, maxX); maxY = Mathf.Min(mapResolution - 1, maxY);
             for (int y = minY; y <= maxY; y++)
                 for (int x = minX; x <= maxX; x++)
-                    pixels[y * MapResolution + x] = color;
+                    pixels[y * mapResolution + x] = color;
         }
 
         private void RasterizeBox(MeshRenderer renderer, Color32[] pixels, Color32 color, float texel)
@@ -374,10 +471,10 @@ namespace KartIHC.UI
             float toleranceZ = texel * 0.5f / Mathf.Max(0.0001f, Mathf.Abs(scale.z));
             Bounds world = renderer.bounds;
 
-            int minX = Mathf.Clamp(Mathf.FloorToInt((world.min.x - worldRect.x) / texel), 0, MapResolution - 1);
-            int maxX = Mathf.Clamp(Mathf.CeilToInt((world.max.x - worldRect.x) / texel), 0, MapResolution - 1);
-            int minY = Mathf.Clamp(Mathf.FloorToInt((world.min.z - worldRect.y) / texel), 0, MapResolution - 1);
-            int maxY = Mathf.Clamp(Mathf.CeilToInt((world.max.z - worldRect.y) / texel), 0, MapResolution - 1);
+            int minX = Mathf.Clamp(Mathf.FloorToInt((world.min.x - worldRect.x) / texel), 0, mapResolution - 1);
+            int maxX = Mathf.Clamp(Mathf.CeilToInt((world.max.x - worldRect.x) / texel), 0, mapResolution - 1);
+            int minY = Mathf.Clamp(Mathf.FloorToInt((world.min.z - worldRect.y) / texel), 0, mapResolution - 1);
+            int maxY = Mathf.Clamp(Mathf.CeilToInt((world.max.z - worldRect.y) / texel), 0, mapResolution - 1);
             for (int y = minY; y <= maxY; y++)
             {
                 for (int x = minX; x <= maxX; x++)
@@ -386,7 +483,7 @@ namespace KartIHC.UI
                     Vector3 p = worldToLocal.MultiplyPoint3x4(point);
                     if (Mathf.Abs(p.x - local.center.x) <= local.extents.x + toleranceX &&
                         Mathf.Abs(p.z - local.center.z) <= local.extents.z + toleranceZ)
-                        pixels[y * MapResolution + x] = color;
+                        pixels[y * mapResolution + x] = color;
                 }
             }
         }
@@ -425,7 +522,10 @@ namespace KartIHC.UI
             BuildLegendItems(showKart, expectDrone, droneFresh, anyDoor);
             Rect panel = ComputePanelRect(bridge, Mathf.CeilToInt(legendItems.Count / 2f), out Rect map, out Rect legend);
             KartUIStyle.Panel(panel, accentBar: false);
-            GUI.DrawTexture(map, mapTexture, ScaleMode.StretchToFill, true);
+            UpdateView();
+            GUI.DrawTextureWithTexCoords(map, mapTexture, new Rect(
+                (viewRect.x - worldRect.x) / worldRect.width, (viewRect.y - worldRect.y) / worldRect.height,
+                viewRect.width / worldRect.width, viewRect.height / worldRect.height), true);
             DrawNorthLabel(map);
 
             GUI.BeginGroup(map);
@@ -484,10 +584,38 @@ namespace KartIHC.UI
             return panel;
         }
 
+        private Rect SquareRect(Bounds area)
+        {
+            float span = Mathf.Max(area.size.x, area.size.z) + WorldPadding * 2f;
+            return new Rect(area.center.x - span * 0.5f, area.center.z - span * 0.5f, span, span);
+        }
+
+        /// <summary>
+        /// Encuadre: el del anillo, o una ventana de RouteViewMeters centrada en el kart cuando va por la
+        /// ruta (dentro de los límites de la textura). Transición suave entre ambos.
+        /// </summary>
+        private void UpdateView()
+        {
+            Rect target = ringViewRect;
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (route != null && kart != null &&
+                route.Contains(kart.transform.position, 1f, out float along) && along >= KartOnRouteFrom)
+            {
+                float size = Mathf.Min(RouteViewMeters, worldRect.width);
+                Vector3 k = kart.transform.position;
+                float x = Mathf.Clamp(k.x - size * 0.5f, worldRect.xMin, worldRect.xMax - size);
+                float z = Mathf.Clamp(k.z - size * 0.5f, worldRect.yMin, worldRect.yMax - size);
+                target = new Rect(x, z, size, size);
+            }
+            float t = 1f - Mathf.Exp(-Time.unscaledDeltaTime * ViewBlendSpeed);
+            viewRect = new Rect(Mathf.Lerp(viewRect.x, target.x, t), Mathf.Lerp(viewRect.y, target.y, t),
+                Mathf.Lerp(viewRect.width, target.width, t), Mathf.Lerp(viewRect.height, target.height, t));
+        }
+
         private Vector2 WorldToMap(Rect map, Vector3 world)
         {
-            float u = Mathf.Clamp01((world.x - worldRect.x) / worldRect.width);
-            float v = Mathf.Clamp01((world.z - worldRect.y) / worldRect.height);
+            float u = Mathf.Clamp01((world.x - viewRect.x) / viewRect.width);
+            float v = Mathf.Clamp01((world.z - viewRect.y) / viewRect.height);
             return new Vector2(map.x + u * map.width, map.yMax - v * map.height);
         }
 
@@ -523,7 +651,7 @@ namespace KartIHC.UI
 
         private void DrawBar(Rect map, Vector2 center, Marker marker)
         {
-            float length = Mathf.Max(marker.SizePixels, marker.LengthMeters / worldRect.width * map.width);
+            float length = Mathf.Max(marker.SizePixels, marker.LengthMeters / viewRect.width * map.width);
             float thickness = marker.SizePixels;
             Matrix4x4 previous = GUI.matrix;
             // Barra dibujada vertical (eje largo = norte) y girada al rumbo del obstáculo.
@@ -562,7 +690,7 @@ namespace KartIHC.UI
                 yaw = YawOf(drone.rotation);
 
                 // Alcance de hackeo alrededor del dron, a escala.
-                float rangePixels = DoorHackRangeMeters * 2f / worldRect.width * map.width;
+                float rangePixels = DoorHackRangeMeters * 2f / viewRect.width * map.width;
                 Vector2 c = WorldToMap(map, position);
                 DrawTinted(new Rect(c.x - rangePixels * 0.5f, c.y - rangePixels * 0.5f, rangePixels, rangePixels),
                     ringTexture, new Color(DroneColor.r, DroneColor.g, DroneColor.b, bridge.DroneLocked ? 0.2f : 0.45f));

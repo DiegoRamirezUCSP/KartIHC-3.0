@@ -49,16 +49,22 @@ namespace KartIHC.EditorTools
             var triangles = CollectTriangles(instances, out int colliderCount);
             List<(string name, Vector3 point)> viewpoints = Viewpoints();
             List<(string name, Vector3 point)> targets = Targets();
+            EscapeRouteDefinition route = Object.FindFirstObjectByType<EscapeRouteDefinition>();
 
             int total = 0, blocked = 0;
             var blockedByTarget = new Dictionary<string, int>();
             var examples = new List<string>();
-            foreach ((string viewName, Vector3 from) in viewpoints)
+            foreach ((string targetName, Vector3 to) in targets)
             {
-                foreach ((string targetName, Vector3 to) in targets)
+                // Objetivos de la ruta por la ciudad: el dron los mira desde encima de la ruta, cerca.
+                float along = 0f;
+                bool onRoute = route != null && route.Contains(to, 1f, out along) && along >= 4f;
+                List<(string name, Vector3 point)> from = onRoute ? RouteViewpoints(route, along) : viewpoints;
+                foreach ((string viewName, Vector3 fromPoint) in from)
                 {
+                    Vector3 to2 = to;
                     total++;
-                    if (!SegmentBlocked(from, to, triangles, out string hitName))
+                    if (!SegmentBlocked(fromPoint, to2, triangles, out string hitName))
                     {
                         continue;
                     }
@@ -73,8 +79,8 @@ namespace KartIHC.EditorTools
             }
 
             var text = new StringBuilder();
-            text.AppendLine($"Líneas libres: {total - blocked} de {total} " +
-                            $"({viewpoints.Count} puntos de vuelo × {targets.Count} objetivos).");
+            text.AppendLine($"Líneas libres: {total - blocked} de {total} ({targets.Count} objetivos; " +
+                            $"{viewpoints.Count} puntos de vuelo en el anillo, 6 sobre la ruta por cada objetivo de la ruta).");
             text.AppendLine(colliderCount == 0
                 ? "Colliders en EscapeCity: 0 ✔"
                 : $"Colliders en EscapeCity: {colliderCount} ✘ (la ciudad no debe tener ninguno)");
@@ -120,6 +126,19 @@ namespace KartIHC.EditorTools
             return points;
         }
 
+        /// <summary>Puntos de vuelo sobre la ruta alrededor de un objetivo (20 y 10 m antes, 10 m después; a 12 y 20 m).</summary>
+        private static List<(string, Vector3)> RouteViewpoints(EscapeRouteDefinition route, float along)
+        {
+            var points = new List<(string, Vector3)>();
+            foreach (float offset in new[] { -20f, -10f, 10f })
+            {
+                float at = Mathf.Clamp(along + offset, 0f, route.Length);
+                foreach (float height in RingHeights)
+                    points.Add(($"ruta {at:0} m a {height:0} m", route.PointAt(at) + Vector3.up * height));
+            }
+            return points;
+        }
+
         private static List<(string, Vector3)> Targets()
         {
             var points = new List<(string, Vector3)>();
@@ -138,7 +157,15 @@ namespace KartIHC.EditorTools
                 AddLineTargets(points, $"Puerta {i}", panel.position, panel.right);
             }
 
-            // La barrera policial se crea en tiempo de ejecución: se usa su ángulo fijo.
+            // La barrera policial se crea en tiempo de ejecución: en la ruta si existe, si no en su ángulo fijo.
+            EscapeRouteDefinition route = Object.FindFirstObjectByType<EscapeRouteDefinition>();
+            if (route != null)
+            {
+                float at = route.BarrierDistance;
+                Vector3 dir = route.DirectionAt(at);
+                AddLineTargets(points, "Barrera policial", route.PointAt(at), new Vector3(dir.z, 0f, -dir.x));
+                return points;
+            }
             float barrier = CityZones.PoliceBarrierAngle;
             AddLineTargets(points, "Barrera policial",
                 EscapeTrackGeometry.PointAt(barrier, EscapeTrackGeometry.RoadRadius, TargetHeight),

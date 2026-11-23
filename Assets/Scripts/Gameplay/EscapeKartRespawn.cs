@@ -30,6 +30,11 @@ namespace KartIHC.Gameplay
         private const float GateClearanceDegrees = 8f;
         private const float RespawnDropMeters = 0.05f;
         private const float DefaultSpawnAngle = 11.3f;
+        // Ruta por la ciudad (EscapeRouteDefinition): el tramo inicial pisa el borde del anillo;
+        // a partir de aquí cuenta como ruta aunque el radio también diga "anillo".
+        private const float RouteOverRingMeters = 4f;
+        private const float RouteStartRespawnMeters = 7f;
+        private const float RouteGateClearanceMeters = 6f;
 
         private KartController kart;
         private Rigidbody body;
@@ -38,6 +43,9 @@ namespace KartIHC.Gameplay
         private GameStateManager gameStateManager;
         private float offTrackTimer;
         private float lastTrackAngle = float.NaN;
+        private bool lastOnRoute;
+        private bool recoveryBlocked;
+        private float lastRouteDistance;
         private Renderer exitRoad;
         private float nextExitRoadLookup;
         private readonly List<(float progress, Vector3 position, Quaternion rotation)> sectorPoints =
@@ -62,6 +70,7 @@ namespace KartIHC.Gameplay
         private void Update()
         {
             EscapeModeNetworkBridge bridge = EscapeModeNetworkBridge.Instance;
+            BlockRecoveryAfterResult(bridge);
             if (!IsDriverSession(bridge) || !EnsureKart())
             {
                 offTrackTimer = 0f;
@@ -75,8 +84,14 @@ namespace KartIHC.Gameplay
             }
 
             Vector3 position = kart.transform.position;
+            if (TrackRoute(position))
+            {
+                offTrackTimer = 0f;
+                return;
+            }
             if (IsOnTrack(position))
             {
+                lastOnRoute = false;
                 lastTrackAngle = EscapeTrackGeometry.AngleOf(position);
                 offTrackTimer = 0f;
                 return;
@@ -99,11 +114,36 @@ namespace KartIHC.Gameplay
             return true;
         }
 
+        /// <summary>
+        /// Tras ganar o perder no hay reaparición (ni T ni automática) hasta reiniciar la partida:
+        /// se desactiva KartRecovery (su Update atiende T, caída, vuelco y atasco). La vuelta al menú
+        /// sigue funcionando porque KartResetOnMenu llama a ResetToStart directamente.
+        /// </summary>
+        private void BlockRecoveryAfterResult(EscapeModeNetworkBridge bridge)
+        {
+            bool finished = bridge != null && (bridge.HasWon || bridge.HasLost);
+            if (finished == recoveryBlocked || !EnsureKart() || recovery == null) return;
+            recovery.enabled = !finished;
+            recoveryBlocked = finished;
+        }
+
         private void OnRecoveryRespawned()
         {
             // KartResetOnMenu también usa KartRecovery al volver al menú: ahí no se toca.
             bool playing = gameStateManager == null || gameStateManager.CurrentState == GameState.Playing;
             if (playing && IsDriverSession(EscapeModeNetworkBridge.Instance)) RespawnAtSector("Reaparición");
+        }
+
+        /// <summary>True (y recuerda el progreso) si el kart está en el corredor de la ruta por la ciudad.</summary>
+        private bool TrackRoute(Vector3 position)
+        {
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (route == null || !route.Contains(position, OffTrackMarginMeters, out float distance)) return false;
+            bool onRing = EscapeTrackGeometry.RadiusOf(position) <= EscapeTrackGeometry.OuterRadius + OffTrackMarginMeters;
+            if (onRing && distance < RouteOverRingMeters) return false; // todavía en el anillo
+            lastOnRoute = true;
+            lastRouteDistance = distance;
+            return true;
         }
 
         private bool IsOnTrack(Vector3 position)
@@ -131,6 +171,15 @@ namespace KartIHC.Gameplay
         public void RespawnAtSector(string reason)
         {
             if (!EnsureKart() || body == null) return;
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (lastOnRoute && route != null)
+            {
+                int routeSector = ChooseRouteSectorPoint(route, out Vector3 routePosition, out Quaternion routeRotation);
+                Teleport(routePosition, routeRotation);
+                offTrackTimer = 0f;
+                EscapeModeHudFeed.Publish($"{reason}: el kart vuelve al tramo {routeSector + 1} de la ruta");
+                return;
+            }
             float angle = float.IsNaN(lastTrackAngle) ? EscapeTrackGeometry.AngleOf(kart.transform.position) : lastTrackAngle;
             int sector = ChooseSectorPoint(angle, out Vector3 position, out Quaternion rotation);
             Teleport(position, rotation);
@@ -150,12 +199,16 @@ namespace KartIHC.Gameplay
                 spawn != null ? spawn.position : EscapeTrackGeometry.PointAt(spawnAngle, EscapeTrackGeometry.RoadRadius, y),
                 spawn != null ? spawn.rotation : EscapeTrackGeometry.RaceRotationAt(spawnAngle)));
             // Las puertas cuentan aunque Escape Solo las oculte: los sectores son fijos.
+            // Las puertas y obstáculos que están en la ruta por la ciudad no cortan el anillo.
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
             foreach (EscapeDoor door in EscapeCourseBuilder.Doors)
-                if (door != null) AddGatePoint(spawnAngle, EscapeTrackGeometry.AngleOf(door.transform.position), y);
+                if (door != null && !OnRoute(route, door.transform.position))
+                    AddGatePoint(spawnAngle, EscapeTrackGeometry.AngleOf(door.transform.position), y);
             EscapeHazardDirector hazards = EscapeHazardDirector.Instance;
             if (hazards != null)
                 foreach (EscapeHackableObstacle obstacle in hazards.Obstacles)
-                    if (obstacle != null) AddGatePoint(spawnAngle, obstacle.GateAngle, y);
+                    if (obstacle != null && !OnRoute(route, obstacle.transform.position))
+                        AddGatePoint(spawnAngle, obstacle.GateAngle, y);
             sectorPoints.Sort((a, b) => a.progress.CompareTo(b.progress));
 
             float kartProgress = EscapeTrackGeometry.ProgressFrom(spawnAngle, kartAngle);
@@ -167,10 +220,50 @@ namespace KartIHC.Gameplay
             return chosen;
         }
 
+        private static bool OnRoute(EscapeRouteDefinition route, Vector3 position) =>
+            route != null && route.Contains(position, 1f, out float distance) && distance >= RouteOverRingMeters;
+
+        /// <summary>
+        /// Sectores de la ruta: el inicio, cada giro y cada puerta u obstáculo en la ruta. Un sector empieza
+        /// en cuanto se cruza su giro/puerta/obstáculo y su punto de reaparición está 6 m después.
+        /// </summary>
+        private int ChooseRouteSectorPoint(EscapeRouteDefinition route, out Vector3 position, out Quaternion rotation)
+        {
+            Transform spawn = GameObject.Find("EscapeKartSpawn")?.transform;
+            float y = spawn != null ? spawn.position.y : 1.1f;
+            var gates = new List<float>();
+            foreach (EscapeDoor door in EscapeCourseBuilder.Doors)
+                if (door != null && route.Contains(door.transform.position, 1f, out float d) && d >= RouteOverRingMeters)
+                    gates.Add(d);
+            EscapeHazardDirector hazards = EscapeHazardDirector.Instance;
+            if (hazards != null)
+                foreach (EscapeHackableObstacle obstacle in hazards.Obstacles)
+                    if (obstacle != null && route.Contains(obstacle.transform.position, 1f, out float d) && d >= RouteOverRingMeters)
+                        gates.Add(d);
+            // Cada giro de la ruta abre también un sector (reaparición 6 m después del giro).
+            for (int i = 1; i < route.PointCount - 1; i++)
+                gates.Add(route.DistanceAtPoint(i));
+            gates.Sort();
+
+            int chosen = 0;
+            float at = RouteStartRespawnMeters;
+            for (int i = 0; i < gates.Count; i++)
+            {
+                if (gates[i] > lastRouteDistance) break;
+                chosen = i + 1;
+                at = gates[i] + RouteGateClearanceMeters;
+            }
+            at = Mathf.Min(at, route.Length);
+            position = route.PointAt(at) + Vector3.up * y;
+            rotation = route.RotationAt(at);
+            return chosen;
+        }
+
         private void AddGatePoint(float spawnAngle, float gateAngle, float y)
         {
+            // El sector empieza al cruzar la puerta; el punto de reaparición está unos grados después.
             float angle = gateAngle + GateClearanceDegrees;
-            sectorPoints.Add((EscapeTrackGeometry.ProgressFrom(spawnAngle, angle),
+            sectorPoints.Add((EscapeTrackGeometry.ProgressFrom(spawnAngle, gateAngle),
                 EscapeTrackGeometry.PointAt(angle, EscapeTrackGeometry.RoadRadius, y),
                 EscapeTrackGeometry.RaceRotationAt(angle)));
         }
@@ -196,6 +289,7 @@ namespace KartIHC.Gameplay
 
         private void OnDestroy()
         {
+            if (recovery != null && recoveryBlocked) recovery.enabled = true;
             if (recovery != null) recovery.Respawned -= OnRecoveryRespawned;
         }
     }

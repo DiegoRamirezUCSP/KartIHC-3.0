@@ -9,9 +9,11 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const int PatrolCount = 4;
     private const float ChaseDuration = 15f;
     private const float TrapInterval = 15f;
-    private const float RespawnDelay = 20f;
+    private const float RespawnDelay = 10f;
+    private const float SpawnInterval = 10f;   // 1 patrulla al inicio y +1 cada 10 s hasta PatrolCount
+    private const int MaxChasing = 2;
     private const float PatrolSpeed = 7f;
-    private const float ChaseSpeed = 8.5f;
+    private const float ChaseSpeed = KartIHC.Gameplay.EscapePoliceLanes.ChaseSpeed; // ~85 % del kart
     private const float OutsidePatrolRadius = 36f;
     private const float OuterBarrierRadius = 33.5f;
     private const float DoorRouteReachDistance = 1.8f;
@@ -109,7 +111,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         bool visible = CanSeeKart(police);
         if (visible)
         {
-            if (police.IsChasing || CountChasing() < 2)
+            if (police.IsChasing || CountChasing() < MaxChasing)
                 police.BeginOrRefreshChase(ChaseDuration);
             else
                 police.StopChase();
@@ -121,10 +123,13 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
         police.SelectPatrolRing(IsOutsideOuterBarrier(police.transform.position));
 
+        // Persecución por carriles y patrullas en la ruta (EscapePoliceLanes); si no, lógica original.
+        bool followingLane = KartIHC.Gameplay.EscapePoliceLanes.TryGetDestination(police, kart,
+            out Vector3 destination, out float laneSpeed);
         // Try an open gate first. If the approach is blocked or the gate is
         // closed, move to another gate; when none are available, keep circling.
-        bool followingDoor = TryGetDoorRoute(police, out Vector3 destination);
-        if (!followingDoor)
+        bool followingDoor = !followingLane && TryGetDoorRoute(police, out destination);
+        if (!followingDoor && !followingLane)
         {
             // A chase speeds up the patrol along its assigned lane. It never
             // steers directly at the kart, so police cannot cut across the track.
@@ -139,11 +144,11 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             destination = route[waypoint];
         }
         destination.y = police.transform.position.y;
-        if (!followingDoor && Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
+        if (!followingDoor && !followingLane && Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
             police.AdvanceWaypoint();
         if (!police.IsChasing && police.ShouldDropTrap) DropPoliceTrap(police);
 
-        float speed = police.IsChasing ? ChaseSpeed : PatrolSpeed;
+        float speed = followingLane ? laneSpeed : police.IsChasing ? ChaseSpeed : PatrolSpeed;
         Vector3 previous = police.transform.position;
         police.transform.position = Vector3.MoveTowards(previous, destination, speed * Time.deltaTime);
         Vector3 direction = police.transform.position - previous;
@@ -308,7 +313,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         {
             int candidateIndex = (doorSearchCursor[patrolId] + offset) % doors.Count;
             EscapeDoor candidate = doors[candidateIndex];
-            if (candidate == null || !candidate.IsOpen) continue;
+            // Las puertas fuera del anillo (ruta por la ciudad) no son portones entre pista y exterior.
+            if (candidate == null || !candidate.IsOpen || IsOutsideOuterBarrier(candidate.transform.position)) continue;
 
             bool outside = IsOutsideOuterBarrier(police.transform.position);
             int phase = outside ? 3 : 1;
@@ -461,7 +467,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         {
             float x = (i - 1.5f) * 2.4f;
             stationSpawns[i] = new Vector3(x, 0.55f, 56f);
-            SpawnPolice(i);
+            if (i == 0) SpawnPolice(i);
+            else respawnAt[i] = Time.time + i * SpawnInterval; // Update las hace salir
         }
     }
 
@@ -569,10 +576,14 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             new Color(0.9f, 0.83f, 0.4f));
         CreateBox(city.transform, "ExitRoadLineRight", new Vector3(2f, 0.0f, 44f), new Vector3(0.15f, 0.025f, 28f),
             new Color(0.9f, 0.83f, 0.4f));
-        CreateBox(city.transform, "TestAreaWallLeft", new Vector3(-6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
-            new Color(0.34f, 0.35f, 0.38f));
-        CreateBox(city.transform, "TestAreaWallRight", new Vector3(6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
-            new Color(0.34f, 0.35f, 0.38f));
+        // Con la ruta por la ciudad, sus muros (con collider) sustituyen a estos muros solo visuales.
+        if (KartIHC.Gameplay.EscapeRouteDefinition.Active == null)
+        {
+            CreateBox(city.transform, "TestAreaWallLeft", new Vector3(-6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
+                new Color(0.34f, 0.35f, 0.38f));
+            CreateBox(city.transform, "TestAreaWallRight", new Vector3(6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
+                new Color(0.34f, 0.35f, 0.38f));
+        }
         if (GameObject.Find(AuthoredStationName) == null)
         {
             CreateBox(city.transform, "PoliceStationBuilding", new Vector3(0f, 3.4f, 66f), new Vector3(22f, 6.8f, 13f),
@@ -586,7 +597,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             CreateText(city.transform, "POLICIA · GENERADOR", new Vector3(0f, 5.4f, 59.0f), 0.55f,
                 new Color(0.96f, 0.97f, 1f));
         }
-        if (includeSoloExit)
+        // Con la ruta por la ciudad (EscapeRouteDefinition), Solo usa la meta de la ruta.
+        if (includeSoloExit && KartIHC.Gameplay.EscapeRouteDefinition.Active == null)
         {
             CreateBox(city.transform, "ExitFinishStripe", new Vector3(0f, 0.02f, 48f), new Vector3(11.8f, 0.05f, 0.65f),
                 new Color(1f, 0.7f, 0.06f));
@@ -754,7 +766,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         if (patrols[id] != police) return;
         patrols[id] = null;
         respawnAt[id] = Time.time + RespawnDelay;
-        PublishMessage(message + " Reaparecerá en la comisaría en 20 s.");
+        PublishMessage(message + $" Reaparecerá en la comisaría en {RespawnDelay:0} s.");
         Destroy(police.gameObject);
     }
 

@@ -168,7 +168,18 @@ namespace KartIHC.Gameplay.Hazards
         {
             obstacleRoot = new GameObject("EscapeHazards").transform;
             obstacleRoot.SetParent(transform, false);
-            AddObstacle(EscapePoliceBarrier.Create(obstacleRoot, PoliceBarrierId, PoliceBarrierAngle));
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (route != null)
+            {
+                // Recorrido por la ciudad: la barrera corta la calle en route.BarrierDistance.
+                float at = route.BarrierDistance;
+                AddObstacle(EscapePoliceBarrier.CreateAt(obstacleRoot, PoliceBarrierId,
+                    route.PointAt(at), route.RotationAt(at), route.Width));
+            }
+            else
+            {
+                AddObstacle(EscapePoliceBarrier.Create(obstacleRoot, PoliceBarrierId, PoliceBarrierAngle));
+            }
         }
 
         private void AddObstacle(EscapeHackableObstacle obstacle)
@@ -189,7 +200,10 @@ namespace KartIHC.Gameplay.Hazards
 
         private void UpdateVisibility()
         {
-            hidden = EscapePoliceStationGenerator.Instance != null && !debugReveal;
+            // Solo Escape Solo oculta los obstáculos (no hay hacker que los abra). La policía existe
+            // también en cooperativo desde que Diego la activa para ambos roles.
+            EscapePoliceStationGenerator police = EscapePoliceStationGenerator.Instance;
+            hidden = police != null && police.IsSoloMode && !debugReveal;
             if (obstacleRoot == null || obstacleRoot.gameObject.activeSelf != hidden) return;
             obstacleRoot.gameObject.SetActive(!hidden);
             if (hidden) EndMinigame();
