@@ -15,6 +15,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const float OutsidePatrolRadius = 36f;
     private const float OuterBarrierRadius = 33.5f;
     private const float DoorRouteReachDistance = 1.8f;
+    private const string AuthoredStationName = "City_PoliceStation";
     private static EscapePoliceStationGenerator instance;
 
     [SerializeField, Tooltip("Distancia máxima a la que una patrulla detecta el kart.")] private float visionRange = 38f;
@@ -572,16 +573,19 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             new Color(0.34f, 0.35f, 0.38f));
         CreateBox(city.transform, "TestAreaWallRight", new Vector3(6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
             new Color(0.34f, 0.35f, 0.38f));
-        CreateBox(city.transform, "PoliceStationBuilding", new Vector3(0f, 3.4f, 66f), new Vector3(22f, 6.8f, 13f),
-            new Color(0.66f, 0.69f, 0.73f));
-        CreateBox(city.transform, "PoliceStationBlueFacade", new Vector3(0f, 2.0f, 59.35f), new Vector3(22f, 2.6f, 0.3f),
-            new Color(0.04f, 0.16f, 0.43f));
-        CreateBox(city.transform, "PoliceStationGarageLeft", new Vector3(-6.2f, 1.8f, 59.1f), new Vector3(7.2f, 3.6f, 0.35f),
-            new Color(0.12f, 0.14f, 0.17f));
-        CreateBox(city.transform, "PoliceStationGarageRight", new Vector3(6.2f, 1.8f, 59.1f), new Vector3(7.2f, 3.6f, 0.35f),
-            new Color(0.12f, 0.14f, 0.17f));
-        CreateText(city.transform, "POLICIA · GENERADOR", new Vector3(0f, 5.4f, 59.0f), 0.55f,
-            new Color(0.96f, 0.97f, 1f));
+        if (GameObject.Find(AuthoredStationName) == null)
+        {
+            CreateBox(city.transform, "PoliceStationBuilding", new Vector3(0f, 3.4f, 66f), new Vector3(22f, 6.8f, 13f),
+                new Color(0.66f, 0.69f, 0.73f));
+            CreateBox(city.transform, "PoliceStationBlueFacade", new Vector3(0f, 2.0f, 59.35f), new Vector3(22f, 2.6f, 0.3f),
+                new Color(0.04f, 0.16f, 0.43f));
+            CreateBox(city.transform, "PoliceStationGarageLeft", new Vector3(-6.2f, 1.8f, 59.1f), new Vector3(7.2f, 3.6f, 0.35f),
+                new Color(0.12f, 0.14f, 0.17f));
+            CreateBox(city.transform, "PoliceStationGarageRight", new Vector3(6.2f, 1.8f, 59.1f), new Vector3(7.2f, 3.6f, 0.35f),
+                new Color(0.12f, 0.14f, 0.17f));
+            CreateText(city.transform, "POLICIA · GENERADOR", new Vector3(0f, 5.4f, 59.0f), 0.55f,
+                new Color(0.96f, 0.97f, 1f));
+        }
         if (includeSoloExit)
         {
             CreateBox(city.transform, "ExitFinishStripe", new Vector3(0f, 0.02f, 48f), new Vector3(11.8f, 0.05f, 0.65f),

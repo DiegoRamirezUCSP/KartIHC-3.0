@@ -923,6 +923,21 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         EscapeModeHudFeed.Publish(status);
     }
 
+    /// <summary>
+    /// Bloquea el dron del hacker 'seconds' segundos con el mismo bloqueo y overlay
+    /// "DRON BLOQUEADO" que un hackeo fallido. Estado local del hacker: no envía mensajes.
+    /// </summary>
+    public void ImmobilizeDrone(float seconds, string reason)
+    {
+        if (!isHacker || seconds <= 0f) return;
+        hackMinigameActive = false;
+        hackDoorId = -1;
+        hackPatternProgress = 0;
+        droneLockedUntil = Mathf.Max(droneLockedUntil, Time.unscaledTime + seconds);
+        status = string.IsNullOrEmpty(reason) ? $"Dron bloqueado por {seconds:0} s" : reason;
+        EscapeModeHudFeed.Publish(status);
+    }
+
     private void CreateReconDrone()
     {
         if (savedGameplayCamera == null) savedGameplayCamera = Camera.main;
@@ -954,6 +969,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         droneCamera.fieldOfView = 60f;
         droneCamera.nearClipPlane = 0.1f;
         droneCamera.enabled = true;
+        UnityEngine.Rendering.Universal.CameraExtensions.GetUniversalAdditionalCameraData(droneCamera).renderPostProcessing = true;
         status = "Dron activo · WASD mueve, Q/E altura, botón derecho del ratón mira, rueda acerca y mantén H o clic izquierdo para hackear";
         EscapeModeHudFeed.Publish(status);
     }

@@ -24,15 +24,31 @@ namespace KartIHC.UI
     /// </summary>
     public sealed class EscapeMinimap : MonoBehaviour
     {
-        public enum MarkerShape { Square, Dot, Checker }
+        public enum MarkerShape { Square, Dot, Checker, Bar }
 
-        /// <summary>Marcador genérico para fuentes adicionales (trampas, patrullas...).</summary>
+        /// <summary>Marcador genérico para fuentes adicionales (obstáculos, trampas, patrullas...).</summary>
         public struct Marker
         {
             public Vector3 Position;
             public MarkerShape Shape;
             public Color Color;
+            /// <summary>Lado del icono; en Bar, el grosor de la barra.</summary>
             public float SizePixels;
+            /// <summary>Solo Bar: rumbo del eje largo (0 = norte, sentido horario).</summary>
+            public float Yaw;
+            /// <summary>Solo Bar: largo en metros del mundo, a escala del mapa.</summary>
+            public float LengthMeters;
+            /// <summary>Anillo pulsante (p. ej. objetivo a alcance del hacker).</summary>
+            public bool Highlight;
+        }
+
+        /// <summary>Fila extra de la leyenda; IsVisible decide si se muestra en este frame.</summary>
+        public struct LegendEntry
+        {
+            public MarkerShape Shape;
+            public Color Color;
+            public string Label;
+            public Func<bool> IsVisible;
         }
 
         private const string EscapeSceneName = "EscapeCourse";
@@ -55,6 +71,7 @@ namespace KartIHC.UI
         private static readonly Color RoadColor = new Color(0.36f, 0.38f, 0.42f, 1f);
         private static readonly Color BarrierColor = new Color(0.86f, 0.86f, 0.84f, 0.95f);
         private static readonly Color CityColor = new Color(0.24f, 0.26f, 0.3f, 1f);
+        private static readonly Color StationColor = new Color(0.2f, 0.3f, 0.55f, 1f);
 
         /// <summary>
         /// Punto de extensión: cada fuente agrega sus marcadores en cada frame.
@@ -69,6 +86,27 @@ namespace KartIHC.UI
         }
 
         public static void UnregisterMarkerSource(Action<List<Marker>> source) => markerSources.Remove(source);
+
+        private static readonly List<KeyValuePair<string, LegendEntry>> legendEntries = new List<KeyValuePair<string, LegendEntry>>();
+
+        public static void RegisterLegendEntry(string key, LegendEntry entry)
+        {
+            UnregisterLegendEntry(key);
+            legendEntries.Add(new KeyValuePair<string, LegendEntry>(key, entry));
+        }
+
+        public static void UnregisterLegendEntry(string key) => legendEntries.RemoveAll(pair => pair.Key == key);
+
+        private struct LegendItem
+        {
+            public MarkerShape Shape;
+            public Color Color;
+            public string Label;
+            public bool KartIcon;
+            public bool DoorIcon;
+        }
+
+        private readonly List<LegendItem> legendItems = new List<LegendItem>();
 
         private readonly List<Marker> markers = new List<Marker>();
         private Texture2D mapTexture;
@@ -243,6 +281,21 @@ namespace KartIHC.UI
                 if (!hasBounds) { bounds = new Bounds(finish.transform.position, Vector3.one); hasBounds = true; }
                 else bounds.Encapsulate(finish.transform.position);
             }
+            // Ciudad generada (KartIHC/City): la comisaría amplía los límites solo con policía, como
+            // hacía la caja de EscapePoliceStationGenerator; las manzanas nunca (se recortan).
+            CityFootprints city = FindFirstObjectByType<CityFootprints>();
+            if (city != null && EscapePoliceStationGenerator.Instance != null)
+            {
+                foreach (CityFootprints.Footprint footprint in city.Footprints)
+                {
+                    if (footprint.Kind != CityFootprints.Kind.Station) continue;
+                    var min = new Vector3(footprint.Area.xMin, 0f, footprint.Area.yMin);
+                    var max = new Vector3(footprint.Area.xMax, 0f, footprint.Area.yMax);
+                    if (!hasBounds) { bounds = new Bounds(min, Vector3.zero); hasBounds = true; }
+                    bounds.Encapsulate(min);
+                    bounds.Encapsulate(max);
+                }
+            }
             if (!hasBounds) bounds = new Bounds(Vector3.zero, new Vector3(80f, 1f, 80f));
 
             float span = Mathf.Max(bounds.size.x, bounds.size.z) + WorldPadding * 2f;
@@ -258,6 +311,13 @@ namespace KartIHC.UI
             }
             var pixels = new Color32[MapResolution * MapResolution];
             float texel = span / MapResolution;
+            // Manzanas y comisaría de la ciudad generada al fondo.
+            if (city != null)
+            {
+                foreach (CityFootprints.Footprint footprint in city.Footprints)
+                    FillWorldRect(pixels, footprint.Area,
+                        footprint.Kind == CityFootprints.Kind.Station ? StationColor : CityColor, texel);
+            }
             // Ciudad primero, luego pista, luego barreras encima.
             for (int layer = 0; layer <= 2; layer++)
             {
@@ -283,6 +343,21 @@ namespace KartIHC.UI
                 return objectName.Contains("Wall") ? 2 : objectName == "ExitRoad" ? 1 : 0;
             }
             return -1;
+        }
+
+        /// <summary>Rellena un rectángulo del mundo (x, z) alineado con los ejes.</summary>
+        private void FillWorldRect(Color32[] pixels, Rect area, Color32 color, float texel)
+        {
+            int minX = Mathf.FloorToInt((area.xMin - worldRect.x) / texel);
+            int maxX = Mathf.CeilToInt((area.xMax - worldRect.x) / texel) - 1;
+            int minY = Mathf.FloorToInt((area.yMin - worldRect.y) / texel);
+            int maxY = Mathf.CeilToInt((area.yMax - worldRect.y) / texel) - 1;
+            if (maxX < 0 || maxY < 0 || minX >= MapResolution || minY >= MapResolution) return;
+            minX = Mathf.Max(0, minX); minY = Mathf.Max(0, minY);
+            maxX = Mathf.Min(MapResolution - 1, maxX); maxY = Mathf.Min(MapResolution - 1, maxY);
+            for (int y = minY; y <= maxY; y++)
+                for (int x = minX; x <= maxX; x++)
+                    pixels[y * MapResolution + x] = color;
         }
 
         private void RasterizeBox(MeshRenderer renderer, Color32[] pixels, Color32 color, float texel)
@@ -347,7 +422,8 @@ namespace KartIHC.UI
             foreach (EscapeDoor door in EscapeCourseBuilder.Doors)
                 if (door != null && door.gameObject.activeInHierarchy) anyDoor = true;
 
-            Rect panel = ComputePanelRect(bridge, out Rect map, out Rect legend);
+            BuildLegendItems(showKart, expectDrone, droneFresh, anyDoor);
+            Rect panel = ComputePanelRect(bridge, Mathf.CeilToInt(legendItems.Count / 2f), out Rect map, out Rect legend);
             KartUIStyle.Panel(panel, accentBar: false);
             GUI.DrawTexture(map, mapTexture, ScaleMode.StretchToFill, true);
             DrawNorthLabel(map);
@@ -365,14 +441,14 @@ namespace KartIHC.UI
                 GUI.Label(new Rect(map.x, map.y + map.height * 0.5f - KartUIStyle.S(12f), map.width, KartUIStyle.S(24f)),
                     "DRON · SIN SEÑAL", smallStyle);
 
-            DrawLegend(legend, showKart, expectDrone, droneFresh, anyDoor);
+            DrawLegend(legend);
         }
 
-        private Rect ComputePanelRect(EscapeModeNetworkBridge bridge, out Rect map, out Rect legend)
+        private Rect ComputePanelRect(EscapeModeNetworkBridge bridge, int legendRows, out Rect map, out Rect legend)
         {
             float margin = KartUIStyle.S(16f);
             float padding = KartUIStyle.S(8f);
-            float legendHeight = KartUIStyle.S(46f);
+            float legendHeight = KartUIStyle.S(23f) * Mathf.Max(1, legendRows);
             float available = Screen.height - GameHudReservedHeight - margin;
             float mapSize = Mathf.Min(KartUIStyle.S(260f), Screen.width * 0.3f,
                 available - legendHeight - padding * 3f);
@@ -390,6 +466,10 @@ namespace KartIHC.UI
                 float overlayHeight = bridge.HackMinigameActive ? 158f : 108f;
                 blocker = new Rect((Screen.width - overlayWidth) * 0.5f,
                     Mathf.Max(8f, Screen.height - overlayHeight - 20f), overlayWidth, overlayHeight);
+            }
+            else if (bridge.IsHacker && EscapeHazardHud.TryGetBottomOverlay(out Rect hazardOverlay))
+            {
+                blocker = hazardOverlay;
             }
             else if (!bridge.IsHacker)
             {
@@ -416,8 +496,18 @@ namespace KartIHC.UI
             Vector2 center = WorldToMap(map, marker.Position);
             float size = marker.SizePixels;
             var rect = new Rect(center.x - size * 0.5f, center.y - size * 0.5f, size, size);
+            if (marker.Highlight)
+            {
+                float pulse = 0.55f + Mathf.Sin(Time.unscaledTime * 5f) * 0.3f;
+                float ring = KartUIStyle.S(22f);
+                DrawTinted(new Rect(center.x - ring * 0.5f, center.y - ring * 0.5f, ring, ring), ringTexture,
+                    new Color(KartColor.r, KartColor.g, KartColor.b, pulse));
+            }
             switch (marker.Shape)
             {
+                case MarkerShape.Bar:
+                    DrawBar(map, center, marker);
+                    break;
                 case MarkerShape.Checker:
                     DrawChecker(rect);
                     break;
@@ -429,6 +519,19 @@ namespace KartIHC.UI
                     KartUIStyle.Fill(new Rect(rect.x + 1f, rect.y + 1f, rect.width - 2f, rect.height - 2f), marker.Color);
                     break;
             }
+        }
+
+        private void DrawBar(Rect map, Vector2 center, Marker marker)
+        {
+            float length = Mathf.Max(marker.SizePixels, marker.LengthMeters / worldRect.width * map.width);
+            float thickness = marker.SizePixels;
+            Matrix4x4 previous = GUI.matrix;
+            // Barra dibujada vertical (eje largo = norte) y girada al rumbo del obstáculo.
+            GUIUtility.RotateAroundPivot(marker.Yaw, center);
+            var outline = new Rect(center.x - thickness * 0.5f - 1f, center.y - length * 0.5f - 1f, thickness + 2f, length + 2f);
+            KartUIStyle.Fill(outline, new Color(0f, 0f, 0f, 0.7f));
+            KartUIStyle.Fill(new Rect(outline.x + 1f, outline.y + 1f, thickness, length), marker.Color);
+            GUI.matrix = previous;
         }
 
         private void DrawHackableDoorHighlights(Rect map, EscapeModeNetworkBridge bridge)
@@ -498,47 +601,68 @@ namespace KartIHC.UI
             GUI.Label(new Rect(map.x, map.y + KartUIStyle.S(2f), map.width, KartUIStyle.S(18f)), "N", smallStyle);
         }
 
-        private void DrawLegend(Rect legend, bool showKart, bool showDrone, bool droneFresh, bool showDoors)
+        private void BuildLegendItems(bool showKart, bool showDrone, bool droneFresh, bool showDoors)
         {
-            float row = legend.height * 0.5f;
+            legendItems.Clear();
+            if (showKart) legendItems.Add(new LegendItem { KartIcon = true, Color = KartColor, Label = "Kart" });
+            if (showDrone)
+                legendItems.Add(new LegendItem
+                {
+                    Shape = MarkerShape.Dot,
+                    Color = droneFresh ? DroneColor : new Color(StaleColor.r, StaleColor.g, StaleColor.b, 0.5f),
+                    Label = droneFresh ? "Dron" : "Dron · sin señal"
+                });
+            legendItems.Add(new LegendItem { Shape = MarkerShape.Checker, Label = "Meta" });
+            if (showDoors) legendItems.Add(new LegendItem { DoorIcon = true, Label = "Puerta" });
+            foreach (KeyValuePair<string, LegendEntry> pair in legendEntries)
+            {
+                LegendEntry entry = pair.Value;
+                bool visible;
+                try { visible = entry.IsVisible == null || entry.IsVisible(); }
+                catch (Exception) { visible = false; }
+                if (visible) legendItems.Add(new LegendItem { Shape = entry.Shape, Color = entry.Color, Label = entry.Label });
+            }
+        }
+
+        private void DrawLegend(Rect legend)
+        {
+            float row = KartUIStyle.S(23f);
             float column = legend.width * 0.5f;
             float icon = KartUIStyle.S(12f);
-            int slot = 0;
-
-            Rect NextSlot()
+            for (int slot = 0; slot < legendItems.Count; slot++)
             {
+                LegendItem item = legendItems[slot];
                 var cell = new Rect(legend.x + (slot % 2) * column, legend.y + (slot / 2) * row, column, row);
-                slot++;
-                return cell;
+                var iconRect = new Rect(cell.x + KartUIStyle.S(2f), cell.y + (cell.height - icon) * 0.5f, icon, icon);
+                var textRect = new Rect(cell.x + icon + KartUIStyle.S(8f), cell.y, cell.width - icon - KartUIStyle.S(8f), cell.height);
+                if (item.KartIcon) DrawTinted(iconRect, triangleTexture, item.Color);
+                else DrawLegendIcon(iconRect, item);
+                GUI.Label(textRect, item.Label, labelStyle);
             }
+        }
 
-            Rect IconRect(Rect cell) => new Rect(cell.x + KartUIStyle.S(2f), cell.y + (cell.height - icon) * 0.5f, icon, icon);
-            Rect TextRect(Rect cell) => new Rect(cell.x + icon + KartUIStyle.S(8f), cell.y, cell.width - icon - KartUIStyle.S(8f), cell.height);
-
-            if (showKart)
+        private void DrawLegendIcon(Rect rect, LegendItem item)
+        {
+            switch (item.Shape)
             {
-                Rect cell = NextSlot();
-                DrawTinted(IconRect(cell), triangleTexture, KartColor);
-                GUI.Label(TextRect(cell), "Kart", labelStyle);
-            }
-            if (showDrone)
-            {
-                Rect cell = NextSlot();
-                DrawTinted(IconRect(cell), circleTexture, droneFresh ? DroneColor : new Color(StaleColor.r, StaleColor.g, StaleColor.b, 0.5f));
-                GUI.Label(TextRect(cell), droneFresh ? "Dron" : "Dron · sin señal", labelStyle);
-            }
-            {
-                Rect cell = NextSlot();
-                DrawChecker(IconRect(cell));
-                GUI.Label(TextRect(cell), "Meta", labelStyle);
-            }
-            if (showDoors)
-            {
-                Rect cell = NextSlot();
-                Rect iconRect = IconRect(cell);
-                KartUIStyle.Fill(new Rect(iconRect.x, iconRect.y, iconRect.width * 0.5f, iconRect.height), DoorClosedColor);
-                KartUIStyle.Fill(new Rect(iconRect.center.x, iconRect.y, iconRect.width * 0.5f, iconRect.height), DoorOpenColor);
-                GUI.Label(TextRect(cell), "Puerta", labelStyle);
+                case MarkerShape.Checker:
+                    DrawChecker(rect);
+                    break;
+                case MarkerShape.Dot:
+                    DrawTinted(rect, circleTexture, item.Color);
+                    break;
+                case MarkerShape.Bar:
+                    KartUIStyle.Fill(new Rect(rect.x, rect.center.y - rect.height * 0.2f, rect.width, rect.height * 0.4f), item.Color);
+                    break;
+                default:
+                    if (item.DoorIcon)
+                    {
+                        // Mitad cerrada / mitad abierta, como las puertas del mapa.
+                        KartUIStyle.Fill(new Rect(rect.x, rect.y, rect.width * 0.5f, rect.height), DoorClosedColor);
+                        KartUIStyle.Fill(new Rect(rect.center.x, rect.y, rect.width * 0.5f, rect.height), DoorOpenColor);
+                    }
+                    else KartUIStyle.Fill(rect, item.Color);
+                    break;
             }
         }
 

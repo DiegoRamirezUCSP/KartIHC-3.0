@@ -21,6 +21,7 @@ namespace KartIHC.UI
         private static readonly string[] FontNames = { "Segoe UI", "Arial" };
 
         private static Font font;
+        private static bool fontResolved;
         private static Texture2D panelTexture;
         private static Texture2D white;
         private static GUIStyle panel;
@@ -46,9 +47,10 @@ namespace KartIHC.UI
             }
 
             builtScale = Scale;
-            if (font == null)
+            if (!fontResolved)
             {
-                font = Font.CreateDynamicFontFromOSFont(FontNames, 32);
+                font = CreateInstalledFont();
+                fontResolved = true;
             }
             if (panelTexture == null)
             {
@@ -63,6 +65,23 @@ namespace KartIHC.UI
             Big = Make(44, FontStyle.Bold, Accent, TextAnchor.MiddleRight);
             Title = Make(52, FontStyle.Bold, Accent, TextAnchor.MiddleCenter);
             Hint = Make(20, FontStyle.Normal, Muted, TextAnchor.MiddleCenter);
+        }
+
+        /// <summary>
+        /// Primera fuente de FontNames instalada en el sistema, o null (fuente por defecto de Unity).
+        /// Pedir una no instalada (Segoe UI en macOS) hace que Unity avise en cada texto dibujado.
+        /// </summary>
+        private static Font CreateInstalledFont()
+        {
+            string[] installed = Font.GetOSInstalledFontNames();
+            foreach (string name in FontNames)
+            {
+                if (System.Array.IndexOf(installed, name) >= 0)
+                {
+                    return Font.CreateDynamicFontFromOSFont(name, 32);
+                }
+            }
+            return null;
         }
 
         private static GUIStyle Make(int size, FontStyle style, Color color, TextAnchor anchor)
