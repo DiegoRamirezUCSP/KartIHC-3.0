@@ -71,6 +71,7 @@ namespace KartIHC.UI
         private static readonly Color RoadColor = new Color(0.36f, 0.38f, 0.42f, 1f);
         private static readonly Color BarrierColor = new Color(0.86f, 0.86f, 0.84f, 0.95f);
         private static readonly Color CityColor = new Color(0.24f, 0.26f, 0.3f, 1f);
+        private static readonly Color StationColor = new Color(0.2f, 0.3f, 0.55f, 1f);
 
         /// <summary>
         /// Punto de extensión: cada fuente agrega sus marcadores en cada frame.
@@ -280,6 +281,21 @@ namespace KartIHC.UI
                 if (!hasBounds) { bounds = new Bounds(finish.transform.position, Vector3.one); hasBounds = true; }
                 else bounds.Encapsulate(finish.transform.position);
             }
+            // Ciudad generada (KartIHC/City): la comisaría amplía los límites solo con policía, como
+            // hacía la caja de EscapePoliceStationGenerator; las manzanas nunca (se recortan).
+            CityFootprints city = FindFirstObjectByType<CityFootprints>();
+            if (city != null && EscapePoliceStationGenerator.Instance != null)
+            {
+                foreach (CityFootprints.Footprint footprint in city.Footprints)
+                {
+                    if (footprint.Kind != CityFootprints.Kind.Station) continue;
+                    var min = new Vector3(footprint.Area.xMin, 0f, footprint.Area.yMin);
+                    var max = new Vector3(footprint.Area.xMax, 0f, footprint.Area.yMax);
+                    if (!hasBounds) { bounds = new Bounds(min, Vector3.zero); hasBounds = true; }
+                    bounds.Encapsulate(min);
+                    bounds.Encapsulate(max);
+                }
+            }
             if (!hasBounds) bounds = new Bounds(Vector3.zero, new Vector3(80f, 1f, 80f));
 
             float span = Mathf.Max(bounds.size.x, bounds.size.z) + WorldPadding * 2f;
@@ -295,6 +311,13 @@ namespace KartIHC.UI
             }
             var pixels = new Color32[MapResolution * MapResolution];
             float texel = span / MapResolution;
+            // Manzanas y comisaría de la ciudad generada al fondo.
+            if (city != null)
+            {
+                foreach (CityFootprints.Footprint footprint in city.Footprints)
+                    FillWorldRect(pixels, footprint.Area,
+                        footprint.Kind == CityFootprints.Kind.Station ? StationColor : CityColor, texel);
+            }
             // Ciudad primero, luego pista, luego barreras encima.
             for (int layer = 0; layer <= 2; layer++)
             {
@@ -320,6 +343,21 @@ namespace KartIHC.UI
                 return objectName.Contains("Wall") ? 2 : objectName == "ExitRoad" ? 1 : 0;
             }
             return -1;
+        }
+
+        /// <summary>Rellena un rectángulo del mundo (x, z) alineado con los ejes.</summary>
+        private void FillWorldRect(Color32[] pixels, Rect area, Color32 color, float texel)
+        {
+            int minX = Mathf.FloorToInt((area.xMin - worldRect.x) / texel);
+            int maxX = Mathf.CeilToInt((area.xMax - worldRect.x) / texel) - 1;
+            int minY = Mathf.FloorToInt((area.yMin - worldRect.y) / texel);
+            int maxY = Mathf.CeilToInt((area.yMax - worldRect.y) / texel) - 1;
+            if (maxX < 0 || maxY < 0 || minX >= MapResolution || minY >= MapResolution) return;
+            minX = Mathf.Max(0, minX); minY = Mathf.Max(0, minY);
+            maxX = Mathf.Min(MapResolution - 1, maxX); maxY = Mathf.Min(MapResolution - 1, maxY);
+            for (int y = minY; y <= maxY; y++)
+                for (int x = minX; x <= maxX; x++)
+                    pixels[y * MapResolution + x] = color;
         }
 
         private void RasterizeBox(MeshRenderer renderer, Color32[] pixels, Color32 color, float texel)

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Rendering;
+using KartIHC.UI;
 using Id = KartIHC.EditorTools.CityMaterials.Id;
 using Random = System.Random;
 
@@ -27,6 +28,7 @@ namespace KartIHC.EditorTools
         public const string CenterSection = "City_Center";
         public const string SkylineSection = "City_Skyline";
         public const string StationSection = "City_PoliceStation"; // lo busca EscapePoliceStationGenerator
+        public const string MapSection = "City_Map";                // huellas para el fondo de EscapeMinimap
 
         // ===== Valores para ajustar rápido (vuelve a correr "2 Blocks and Police Station") =====
         private const int Seed = 1127;
@@ -64,7 +66,8 @@ namespace KartIHC.EditorTools
                     (BlocksSection, section => BuildBlocks(section, stats)),
                     (CenterSection, section => BuildCenter(section, stats)),
                     (SkylineSection, section => BuildSkyline(section, stats)),
-                    (StationSection, section => BuildStation(section, stats)));
+                    (StationSection, section => BuildStation(section, stats)),
+                    (MapSection, section => BuildMap(section, stats)));
                 CityGen.EnsureSingleSceneInstance();
             }
             finally
@@ -82,6 +85,7 @@ namespace KartIHC.EditorTools
         private sealed class Stats
         {
             public int Blocks, Buildings, Skyline, Triangles;
+            public readonly List<CityFootprints.Footprint> Footprints = new List<CityFootprints.Footprint>();
         }
 
         // ---------- Manzanas ----------
@@ -147,7 +151,11 @@ namespace KartIHC.EditorTools
             // Aceras (zócalo) bajo cada solar permitido.
             for (int i = 0; i < 2; i++)
                 for (int j = 0; j < 2; j++)
-                    if (allowed[i, j]) shells.Box(SubSidewalk, lots[i, j], GroundY - 0.02f, PlinthHeight, 1f / CityMaterials.SidewalkTile);
+                    if (allowed[i, j])
+                    {
+                        shells.Box(SubSidewalk, lots[i, j], GroundY - 0.02f, PlinthHeight, 1f / CityMaterials.SidewalkTile);
+                        stats.Footprints.Add(new CityFootprints.Footprint { Area = lots[i, j], Kind = CityFootprints.Kind.Block });
+                    }
 
             float distance = block.center.magnitude;
             var footprints = new List<Rect>();
@@ -363,6 +371,7 @@ namespace KartIHC.EditorTools
 
             // Edificio principal de 2 plantas.
             var main = Rect.MinMaxRect(-13f, 59.5f, 13f, 75f);
+            stats.Footprints.Add(new CityFootprints.Footprint { Area = main, Kind = CityFootprints.Kind.Station });
             const float mainTop = 8f;
             RequireStation(main);
             b.Walls(concrete, main, GroundY - 0.02f, mainTop, fu, fv, 0f, 0.5f);
@@ -413,6 +422,14 @@ namespace KartIHC.EditorTools
             {
                 throw new InvalidOperationException($"[City] La comisaría {footprint} invade el carril norte o sale de su zona.");
             }
+        }
+
+        // ---------- Minimapa ----------
+
+        /// <summary>Huellas de manzanas y comisaría para EscapeMinimap (sin renderer ni collider).</summary>
+        private static void BuildMap(Transform section, Stats stats)
+        {
+            section.gameObject.AddComponent<CityFootprints>().SetFootprints(stats.Footprints);
         }
 
         // ---------- Utilidades ----------
