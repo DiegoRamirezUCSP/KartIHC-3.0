@@ -9,9 +9,11 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const int PatrolCount = 4;
     private const float ChaseDuration = 15f;
     private const float TrapInterval = 15f;
-    private const float RespawnDelay = 20f;
+    private const float RespawnDelay = 10f;
+    private const float SpawnInterval = 10f;   // 1 patrulla al inicio y +1 cada 10 s hasta PatrolCount
+    private const int MaxChasing = 2;
     private const float PatrolSpeed = 7f;
-    private const float ChaseSpeed = 8.5f;
+    private const float ChaseSpeed = KartIHC.Gameplay.EscapePoliceLanes.ChaseSpeed; // ~85 % del kart
     private const float OutsidePatrolRadius = 36f;
     private const float OuterBarrierRadius = 33.5f;
     private const float DoorRouteReachDistance = 1.8f;
@@ -109,7 +111,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         bool visible = CanSeeKart(police);
         if (visible)
         {
-            if (police.IsChasing || CountChasing() < 2)
+            if (police.IsChasing || CountChasing() < MaxChasing)
                 police.BeginOrRefreshChase(ChaseDuration);
             else
                 police.StopChase();
@@ -121,10 +123,13 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
 
         police.SelectPatrolRing(IsOutsideOuterBarrier(police.transform.position));
 
+        // Persecución por carriles y patrullas en la ruta (EscapePoliceLanes); si no, lógica original.
+        bool followingLane = KartIHC.Gameplay.EscapePoliceLanes.TryGetDestination(police, kart,
+            out Vector3 destination, out float laneSpeed);
         // Try an open gate first. If the approach is blocked or the gate is
         // closed, move to another gate; when none are available, keep circling.
-        bool followingDoor = TryGetDoorRoute(police, out Vector3 destination);
-        if (!followingDoor)
+        bool followingDoor = !followingLane && TryGetDoorRoute(police, out destination);
+        if (!followingDoor && !followingLane)
         {
             // A chase speeds up the patrol along its assigned lane. It never
             // steers directly at the kart, so police cannot cut across the track.
@@ -139,11 +144,11 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             destination = route[waypoint];
         }
         destination.y = police.transform.position.y;
-        if (!followingDoor && Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
+        if (!followingDoor && !followingLane && Vector3.SqrMagnitude(destination - police.transform.position) < 1.6f * 1.6f)
             police.AdvanceWaypoint();
         if (!police.IsChasing && police.ShouldDropTrap) DropPoliceTrap(police);
 
-        float speed = police.IsChasing ? ChaseSpeed : PatrolSpeed;
+        float speed = followingLane ? laneSpeed : police.IsChasing ? ChaseSpeed : PatrolSpeed;
         Vector3 previous = police.transform.position;
         police.transform.position = Vector3.MoveTowards(previous, destination, speed * Time.deltaTime);
         Vector3 direction = police.transform.position - previous;
@@ -462,7 +467,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         {
             float x = (i - 1.5f) * 2.4f;
             stationSpawns[i] = new Vector3(x, 0.55f, 56f);
-            SpawnPolice(i);
+            if (i == 0) SpawnPolice(i);
+            else respawnAt[i] = Time.time + i * SpawnInterval; // Update las hace salir
         }
     }
 
@@ -760,7 +766,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         if (patrols[id] != police) return;
         patrols[id] = null;
         respawnAt[id] = Time.time + RespawnDelay;
-        PublishMessage(message + " Reaparecerá en la comisaría en 20 s.");
+        PublishMessage(message + $" Reaparecerá en la comisaría en {RespawnDelay:0} s.");
         Destroy(police.gameObject);
     }
 
