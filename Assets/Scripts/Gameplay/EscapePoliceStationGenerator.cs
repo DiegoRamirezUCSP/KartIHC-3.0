@@ -569,10 +569,14 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             new Color(0.9f, 0.83f, 0.4f));
         CreateBox(city.transform, "ExitRoadLineRight", new Vector3(2f, 0.0f, 44f), new Vector3(0.15f, 0.025f, 28f),
             new Color(0.9f, 0.83f, 0.4f));
-        CreateBox(city.transform, "TestAreaWallLeft", new Vector3(-6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
-            new Color(0.34f, 0.35f, 0.38f));
-        CreateBox(city.transform, "TestAreaWallRight", new Vector3(6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
-            new Color(0.34f, 0.35f, 0.38f));
+        // Con la ruta por la ciudad, sus muros (con collider) sustituyen a estos muros solo visuales.
+        if (KartIHC.Gameplay.EscapeRouteDefinition.Active == null)
+        {
+            CreateBox(city.transform, "TestAreaWallLeft", new Vector3(-6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
+                new Color(0.34f, 0.35f, 0.38f));
+            CreateBox(city.transform, "TestAreaWallRight", new Vector3(6.35f, 1.1f, 44f), new Vector3(0.5f, 2.2f, 28f),
+                new Color(0.34f, 0.35f, 0.38f));
+        }
         if (GameObject.Find(AuthoredStationName) == null)
         {
             CreateBox(city.transform, "PoliceStationBuilding", new Vector3(0f, 3.4f, 66f), new Vector3(22f, 6.8f, 13f),
@@ -586,7 +590,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
             CreateText(city.transform, "POLICIA · GENERADOR", new Vector3(0f, 5.4f, 59.0f), 0.55f,
                 new Color(0.96f, 0.97f, 1f));
         }
-        if (includeSoloExit)
+        // Con la ruta por la ciudad (EscapeRouteDefinition), Solo usa la meta de la ruta.
+        if (includeSoloExit && KartIHC.Gameplay.EscapeRouteDefinition.Active == null)
         {
             CreateBox(city.transform, "ExitFinishStripe", new Vector3(0f, 0.02f, 48f), new Vector3(11.8f, 0.05f, 0.65f),
                 new Color(1f, 0.7f, 0.06f));
