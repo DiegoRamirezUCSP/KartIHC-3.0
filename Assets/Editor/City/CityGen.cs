@@ -311,6 +311,7 @@ namespace KartIHC.EditorTools
                 Undo.DestroyObjectImmediate(instance);
             }
             CityAtmosphereBuilder.RestoreSceneLighting();
+            CityKartLookBuilder.Remove();
             EnvGen.EndUndo();
             MarkSceneDirty();
             Debug.Log("[City] Ciudad retirada de EscapeCourse. Los assets de " + Root + " se conservan.");
