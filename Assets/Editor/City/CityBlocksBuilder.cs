@@ -58,6 +58,7 @@ namespace KartIHC.EditorTools
             }
 
             EnvGen.BeginUndo("City Blocks and Police Station");
+            CityZones.RefreshRoute(); // si hay ruta por la ciudad, sus calles quedan libres
             var stats = new Stats();
             try
             {

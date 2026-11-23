@@ -168,7 +168,18 @@ namespace KartIHC.Gameplay.Hazards
         {
             obstacleRoot = new GameObject("EscapeHazards").transform;
             obstacleRoot.SetParent(transform, false);
-            AddObstacle(EscapePoliceBarrier.Create(obstacleRoot, PoliceBarrierId, PoliceBarrierAngle));
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (route != null)
+            {
+                // Recorrido por la ciudad: la barrera corta la calle en route.BarrierDistance.
+                float at = route.BarrierDistance;
+                AddObstacle(EscapePoliceBarrier.CreateAt(obstacleRoot, PoliceBarrierId,
+                    route.PointAt(at), route.RotationAt(at), route.Width));
+            }
+            else
+            {
+                AddObstacle(EscapePoliceBarrier.Create(obstacleRoot, PoliceBarrierId, PoliceBarrierAngle));
+            }
         }
 
         private void AddObstacle(EscapeHackableObstacle obstacle)

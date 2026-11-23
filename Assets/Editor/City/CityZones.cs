@@ -1,3 +1,5 @@
+using System.Collections.Generic;
+using KartIHC.Gameplay;
 using UnityEngine;
 
 namespace KartIHC.EditorTools
@@ -52,7 +54,38 @@ namespace KartIHC.EditorTools
         public static bool BuildingLotAllowed(Rect lot) =>
             MinDistanceToOrigin(lot) >= BuildingMinRadius &&
             !lot.Overlaps(NorthCorridor) &&
-            !lot.Overlaps(StationArea);
+            !lot.Overlaps(StationArea) &&
+            !OverlapsRoute(lot);
+
+        // ---------- Ruta por la ciudad (KartIHC/City/Route On∕Off) ----------
+
+        private static readonly List<Rect> routeCorridors = new List<Rect>();
+
+        /// <summary>Rectángulos (x, z) de cada tramo de la ruta con su ancho; vacío si no hay ruta.</summary>
+        public static IReadOnlyList<Rect> RouteCorridors => routeCorridors;
+
+        /// <summary>Relee la ruta de la escena. Llamar al empezar cada generador.</summary>
+        public static void RefreshRoute()
+        {
+            routeCorridors.Clear();
+            EscapeRouteDefinition route = Object.FindFirstObjectByType<EscapeRouteDefinition>();
+            if (route == null) return;
+            float half = route.HalfWidth;
+            for (int i = 1; i < route.PointCount; i++)
+            {
+                Vector3 a = route.GetPoint(i - 1), b = route.GetPoint(i);
+                routeCorridors.Add(Rect.MinMaxRect(
+                    Mathf.Min(a.x, b.x) - half, Mathf.Min(a.z, b.z) - half,
+                    Mathf.Max(a.x, b.x) + half, Mathf.Max(a.z, b.z) + half));
+            }
+        }
+
+        public static bool OverlapsRoute(Rect area)
+        {
+            foreach (Rect corridor in routeCorridors)
+                if (area.Overlaps(corridor)) return true;
+            return false;
+        }
 
         /// <summary>True si una pieza del centro cabe en la plaza y no supera la altura máxima.</summary>
         public static bool CenterPieceAllowed(Rect footprint, float height) =>

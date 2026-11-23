@@ -38,13 +38,19 @@ namespace KartIHC.Gameplay.Hazards
         {
             float inner = EscapeTrackGeometry.InnerRadius;
             float outer = EscapeTrackGeometry.OuterRadius;
+            return CreateAt(parent, id,
+                EscapeTrackGeometry.PointAt(angleDegrees, (inner + outer) * 0.5f, 0f),
+                EscapeTrackGeometry.RaceRotationAt(angleDegrees), outer - inner);
+        }
+
+        /// <summary>Barrera en cualquier punto (p. ej. la ruta por la ciudad): +Z = sentido de carrera, ancho = span.</summary>
+        public static EscapePoliceBarrier CreateAt(Transform parent, int id, Vector3 position, Quaternion raceRotation, float span)
+        {
             var root = new GameObject($"EscapePoliceBarrier_{id + 1}");
             root.transform.SetParent(parent, false);
-            root.transform.SetPositionAndRotation(
-                EscapeTrackGeometry.PointAt(angleDegrees, (inner + outer) * 0.5f, 0f),
-                EscapeTrackGeometry.RaceRotationAt(angleDegrees));
+            root.transform.SetPositionAndRotation(position, raceRotation);
             var barrier = root.AddComponent<EscapePoliceBarrier>();
-            barrier.span = outer - inner;
+            barrier.span = span;
             barrier.Initialize(id);
             return barrier;
         }
