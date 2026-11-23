@@ -308,7 +308,8 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         {
             int candidateIndex = (doorSearchCursor[patrolId] + offset) % doors.Count;
             EscapeDoor candidate = doors[candidateIndex];
-            if (candidate == null || !candidate.IsOpen) continue;
+            // Las puertas fuera del anillo (ruta por la ciudad) no son portones entre pista y exterior.
+            if (candidate == null || !candidate.IsOpen || IsOutsideOuterBarrier(candidate.transform.position)) continue;
 
             bool outside = IsOutsideOuterBarrier(police.transform.position);
             int phase = outside ? 3 : 1;
