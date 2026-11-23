@@ -182,6 +182,8 @@ namespace KartIHC.EditorTools
                     MeshRenderer renderer = filter.GetComponent<MeshRenderer>();
                     Mesh mesh = filter.sharedMesh;
                     if (renderer == null || !renderer.enabled || mesh == null) continue;
+                    // Las carcasas coinciden con las barreras reales de Diego: no tapan nada nuevo.
+                    if (filter.gameObject.name.StartsWith(CityStreetsBuilder.BarrierShellsName)) continue;
 
                     Matrix4x4 matrix = filter.transform.localToWorldMatrix;
                     Vector3[] vertices = mesh.vertices;

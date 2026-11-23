@@ -18,6 +18,7 @@ namespace KartIHC.EditorTools
             FacadeConcrete, FacadeBrick, FacadeGlass, FacadeStucco, Storefront,
             Roof, Trim, Sidewalk, Asphalt,
             PoliceBlue, Garage, PoliceSign, EntranceGlass, BeaconRed, BeaconBlue,
+            RoadRing, PaintWhite, PaintYellow, Barrier,
         }
 
         // Escalas UV (metros → repeticiones del tile).
@@ -31,12 +32,15 @@ namespace KartIHC.EditorTools
         public const float AsphaltTile = 6f;
         public const float RoofTile = 4f;
         public const float TrimTile = 2f;
+        public const float BarrierTileLength = 2f;   // la textura de barrera cubre 2 m de largo
+        public const float BarrierTileHeight = 2.3f; // y toda la altura de la barrera
 
         // ===== Valores para ajustar rápido (vuelve a correr "2 Blocks and Police Station") =====
         private const float WindowEmission = 1.6f;      // HDR: >1 entra en el bloom
         private const float StorefrontEmission = 1.2f;  // locales de planta baja: -40 % (con 2.0 se quemaban con el bloom)
         private const float BeaconEmission = 4f;
         private const float SignEmission = 2.2f;
+        private static readonly Color RoadRingTint = new Color(0.72f, 0.72f, 0.76f); // pista más oscura que las calles
         private static readonly float[] LitFraction = { 0.35f, 0.4f, 0.3f, 0.4f }; // por estilo de fachada
 
         private const int Seed = 2711;
@@ -67,6 +71,13 @@ namespace KartIHC.EditorTools
             cache[Id.Sidewalk] = Lit("Sidewalk", SaveAlbedo("Sidewalk", GenerateSidewalk(), 256, 256), null, Color.black);
             cache[Id.Asphalt] = Lit("Asphalt", SaveAlbedo("Asphalt", GenerateAsphalt(), 512, 512), null, Color.black);
             cache[Id.Garage] = Lit("Garage", SaveAlbedo("Garage", GenerateGarage(), 256, 256), null, Color.black);
+            cache[Id.Barrier] = Lit("Barrier", SaveAlbedo("Barrier", GenerateBarrier(), 256, 256), null, Color.black);
+            // Asfalto del anillo: misma textura que las calles, más oscuro para separar pista y ciudad.
+            Material ring = Lit("RoadRing", AssetDatabase.LoadAssetAtPath<Texture2D>(CityGen.TexturesFolder + "/City_Asphalt.png"), null, Color.black);
+            ring.SetColor("_BaseColor", RoadRingTint);
+            cache[Id.RoadRing] = ring;
+            cache[Id.PaintWhite] = Plain("PaintWhite", CityGen.Hex("#DCDCD4"), 0.35f, Color.black);
+            cache[Id.PaintYellow] = Plain("PaintYellow", CityGen.Hex("#E2B52C"), 0.35f, Color.black);
 
             GenerateSign("POLICÍA", out Color[] signAlbedo, out Color[] signEmission);
             cache[Id.PoliceSign] = Lit("PoliceSign",
@@ -379,6 +390,43 @@ namespace KartIHC.EditorTools
                     Color c = Color.Lerp(CityGen.Hex("#C9CDD2"), CityGen.Hex("#8A8F96"), slat > 0.8f ? 1f : slat * 0.3f);
                     if (x < 6 || x > size - 7 || y > size - 8) c = CityGen.Hex("#2E3440");
                     c.a = 0.35f;
+                    pixels[y * size + x] = c;
+                }
+            }
+            return pixels;
+        }
+
+        /// <summary>Carcasa de barrera 256×256 = 2 m × 2.3 m: hormigón claro, zócalo sucio y franja roja/blanca.</summary>
+        private static Color[] GenerateBarrier()
+        {
+            const int size = 256;
+            var pixels = new Color[size * size];
+            Color concrete = CityGen.Hex("#B6B2AA");
+            for (int y = 0; y < size; y++)
+            {
+                float v = y / (float)size;
+                for (int x = 0; x < size; x++)
+                {
+                    float n = EnvGen.TileFbm(x / (float)size, y / (float)size, 8, 4, 71) - 0.5f;
+                    Color c = concrete * (1f + n * 0.16f);
+                    c.a = 0.15f;
+                    if (v < 0.1f)
+                    {
+                        c = Color.Lerp(CityGen.Hex("#6F6B65"), c, v / 0.1f);
+                        c.a = 0.1f;
+                    }
+                    else if (v > 0.66f && v < 0.84f)
+                    {
+                        // Franjas diagonales de 32 px; periodo 64 px, encaja con el tile de 256.
+                        bool red = ((x + y) / 32) % 2 == 0;
+                        c = red ? CityGen.Hex("#C8322A") : CityGen.Hex("#ECECE4");
+                        c.a = 0.45f;
+                    }
+                    else if (v > 0.95f)
+                    {
+                        c *= 1.08f;
+                        c.a = 0.15f;
+                    }
                     pixels[y * size + x] = c;
                 }
             }

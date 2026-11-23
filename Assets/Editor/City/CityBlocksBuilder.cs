@@ -10,7 +10,7 @@ namespace KartIHC.EditorTools
 {
     /// <summary>
     /// Etapa 2 de la ciudad: manzanas procedurales alrededor del anillo, una plaza baja en
-    /// el centro, un skyline lejano, el suelo urbano y la comisaría (City_PoliceStation).
+    /// el centro, un skyline lejano y la comisaría (City_PoliceStation). El suelo urbano es de P3.
     ///
     /// Respeta CityZones: edificios solo a r ≥ 39.5 (calle de las patrullas en r 36), nada en
     /// el carril norte ni en la zona de la comisaría, y piezas del centro de ≤ 4.5 m.
@@ -26,7 +26,6 @@ namespace KartIHC.EditorTools
         public const string BlocksSection = "City_Blocks";
         public const string CenterSection = "City_Center";
         public const string SkylineSection = "City_Skyline";
-        public const string GroundSection = "City_Ground";
         public const string StationSection = "City_PoliceStation"; // lo busca EscapePoliceStationGenerator
 
         // ===== Valores para ajustar rápido (vuelve a correr "2 Blocks and Police Station") =====
@@ -38,8 +37,7 @@ namespace KartIHC.EditorTools
         private const float SidewalkWidth = 1.5f;
         private const float InnerGap = 0.5f;         // medio callejón entre edificios de una manzana
         private const float PlinthHeight = 0.15f;
-        private const float GroundY = -0.06f;        // bajo EscapeGround (y 0); visible fuera de ±50 m
-        private const float GroundHalfSize = 300f;
+        private const float GroundY = -0.06f;        // base enterrada de muros y zócalos (el suelo urbano está en P3, y 0.03)
         private const float DetailCullHeight = 0.25f; // ~80 m para una manzana de 24 m
         private const int SkylineCount = 70;
         private const float SkylineMinDistance = 150f;
@@ -63,7 +61,6 @@ namespace KartIHC.EditorTools
             {
                 CityMaterials.BuildAll();
                 CityGen.ReplacePrefabSections(
-                    (GroundSection, BuildGround),
                     (BlocksSection, section => BuildBlocks(section, stats)),
                     (CenterSection, section => BuildCenter(section, stats)),
                     (SkylineSection, section => BuildSkyline(section, stats)),
@@ -85,17 +82,6 @@ namespace KartIHC.EditorTools
         private sealed class Stats
         {
             public int Blocks, Buildings, Skyline, Triangles;
-        }
-
-        // ---------- Suelo ----------
-
-        private static void BuildGround(Transform section)
-        {
-            var builder = new CityMeshBuilder(1);
-            var rect = Rect.MinMaxRect(-GroundHalfSize, -GroundHalfSize, GroundHalfSize, GroundHalfSize);
-            builder.Top(0, rect, GroundY, 1f / CityMaterials.AsphaltTile);
-            Mesh mesh = CityGen.SaveMesh(builder.ToMesh("City_Ground"), "City_Ground");
-            CityGen.CreateRenderer(section, "City_GroundPlane", mesh, new[] { CityMaterials.Get(Id.Asphalt) }, ShadowCastingMode.Off);
         }
 
         // ---------- Manzanas ----------
@@ -372,8 +358,8 @@ namespace KartIHC.EditorTools
             float fu = 1f / CityMaterials.FacadeTileWidth, fv = 1f / CityMaterials.FacadeTileHeight;
             float trimUv = 1f / CityMaterials.TrimTile;
 
-            // Explanada delante (bajo el ExitRoad de Diego, que está en y -0.02).
-            b.Top(sidewalk, Rect.MinMaxRect(-14f, 49.9f, 14f, 59.5f), -0.04f, 1f / CityMaterials.SidewalkTile);
+            // Explanada delante, por encima del suelo urbano de P3 (y 0.03).
+            b.Top(sidewalk, Rect.MinMaxRect(-14f, 49.9f, 14f, 59.5f), 0.045f, 1f / CityMaterials.SidewalkTile);
 
             // Edificio principal de 2 plantas.
             var main = Rect.MinMaxRect(-13f, 59.5f, 13f, 75f);
