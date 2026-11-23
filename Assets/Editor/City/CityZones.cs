@@ -78,6 +78,7 @@ namespace KartIHC.EditorTools
                     Mathf.Min(a.x, b.x) - half, Mathf.Min(a.z, b.z) - half,
                     Mathf.Max(a.x, b.x) + half, Mathf.Max(a.z, b.z) + half));
             }
+            if (route.HasPlaza) routeCorridors.Add(route.Plaza); // plaza final sin edificios
         }
 
         public static bool OverlapsRoute(Rect area)

@@ -224,8 +224,8 @@ namespace KartIHC.Gameplay
             route != null && route.Contains(position, 1f, out float distance) && distance >= RouteOverRingMeters;
 
         /// <summary>
-        /// Sectores de la ruta: el inicio y cada puerta u obstáculo en la ruta. Un sector empieza en
-        /// cuanto se cruza su puerta/obstáculo y su punto de reaparición está 6 m después.
+        /// Sectores de la ruta: el inicio, cada giro y cada puerta u obstáculo en la ruta. Un sector empieza
+        /// en cuanto se cruza su giro/puerta/obstáculo y su punto de reaparición está 6 m después.
         /// </summary>
         private int ChooseRouteSectorPoint(EscapeRouteDefinition route, out Vector3 position, out Quaternion rotation)
         {
@@ -240,6 +240,9 @@ namespace KartIHC.Gameplay
                 foreach (EscapeHackableObstacle obstacle in hazards.Obstacles)
                     if (obstacle != null && route.Contains(obstacle.transform.position, 1f, out float d) && d >= RouteOverRingMeters)
                         gates.Add(d);
+            // Cada giro de la ruta abre también un sector (reaparición 6 m después del giro).
+            for (int i = 1; i < route.PointCount - 1; i++)
+                gates.Add(route.DistanceAtPoint(i));
             gates.Sort();
 
             int chosen = 0;

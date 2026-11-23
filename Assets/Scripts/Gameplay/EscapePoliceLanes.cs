@@ -28,6 +28,9 @@ namespace KartIHC.Gameplay
         public const float KartReferenceSpeed = 18f;
         public const float ChaseSpeedFactor = 0.85f;
         public const float ChaseSpeed = KartReferenceSpeed * ChaseSpeedFactor; // la usa también EscapePoliceStationGenerator
+        /// <summary>Factor de persecución en la ruta por la ciudad (dificultad del tramo final), aparte del anillo.</summary>
+        public const float RouteChaseSpeedFactor = 0.95f;
+        public const float RouteChaseSpeed = KartReferenceSpeed * RouteChaseSpeedFactor;
         public const float RoutePatrolSpeed = 7f;      // como PatrolSpeed de las patrullas normales
         public const int MaxRoutePatrols = 2;
         public const float InnerLaneRadius = 25.5f;    // carril interior de las patrullas (patrolRoadRadius)
@@ -98,6 +101,7 @@ namespace KartIHC.Gameplay
             // 1) Servicio en la ruta (desde el anillo interior, el carril de salida o la propia ruta).
             if (kartOnRoute && (insideRing || policeOnRoute) && WantsRouteDuty(police, state))
             {
+                speed = police.IsChasing ? RouteChaseSpeed : RoutePatrolSpeed;
                 if (policeOnRoute && (dp > 0.5f || policeRadius >= RouteFromRadius))
                 {
                     if (!AlongRoute(route, police, dp, dk, k, out destination)) return Mode.Returning;

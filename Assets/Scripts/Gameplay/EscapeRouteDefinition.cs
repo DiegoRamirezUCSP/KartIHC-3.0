@@ -27,6 +27,10 @@ namespace KartIHC.Gameplay
         [SerializeField] private Vector3 originalPanelLocalPosition;
         [SerializeField] private Quaternion originalPanelLocalRotation = Quaternion.identity;
 
+        // Plaza final (x, z): cuenta como ruta aunque esté fuera del corredor.
+        [SerializeField] private bool hasPlaza;
+        [SerializeField] private Rect plaza;
+
         // Posición original de la meta del anillo, para restaurarla con Route Off.
         [SerializeField] private bool hasOriginalFinish;
         [SerializeField] private Vector3 originalFinishPosition;
@@ -48,6 +52,8 @@ namespace KartIHC.Gameplay
         }
 
         public float Width => width;
+        public bool HasPlaza => hasPlaza;
+        public Rect Plaza => plaza;
         public float HalfWidth => width * 0.5f;
         public int PointCount => points.Length;
         public Vector3 GetPoint(int index) => Flat(points[index]);
@@ -87,6 +93,20 @@ namespace KartIHC.Gameplay
             barrierDistance = barrierAt;
             finishDistance = finishAt;
             doorDistance = doorAt;
+        }
+
+        public void SetPlaza(Rect area)
+        {
+            hasPlaza = true;
+            plaza = area;
+        }
+
+        /// <summary>Distancia recorrida hasta el vértice 'index' (los giros son 1..PointCount-2).</summary>
+        public float DistanceAtPoint(int index)
+        {
+            float length = 0f;
+            for (int i = 1; i <= index && i < points.Length; i++) length += Vector3.Distance(Flat(points[i - 1]), Flat(points[i]));
+            return length;
         }
 
         public void RememberDoor(string doorName, Vector3 position, Quaternion rotation,
@@ -171,12 +191,17 @@ namespace KartIHC.Gameplay
             return bestDistance;
         }
 
-        /// <summary>True si la posición está dentro del corredor de la ruta (ancho/2 + margen).</summary>
+        /// <summary>True si la posición está dentro del corredor de la ruta (ancho/2 + margen) o en la plaza final.</summary>
         public bool Contains(Vector3 position, float margin, out float distance)
         {
             distance = Project(position, out float lateral);
-            return points.Length >= 2 && lateral <= HalfWidth + margin;
+            if (points.Length < 2) return false;
+            return lateral <= HalfWidth + margin || InPlaza(position, margin);
         }
+
+        public bool InPlaza(Vector3 position, float margin = 0f) =>
+            hasPlaza && position.x >= plaza.xMin - margin && position.x <= plaza.xMax + margin &&
+            position.z >= plaza.yMin - margin && position.z <= plaza.yMax + margin;
 
         public bool Contains(Vector3 position, float margin = 0f) => Contains(position, margin, out _);
 

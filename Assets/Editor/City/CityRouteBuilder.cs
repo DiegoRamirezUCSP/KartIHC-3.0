@@ -29,18 +29,23 @@ namespace KartIHC.EditorTools
         private const string MenuPath = CityGen.MenuRoot + "Route On∕Off";
 
         // ===== Recorrido (ajustable; vuelve a correr Off y On) =====
-        // Salida norte del anillo (x 0) → giro a la derecha antes de la comisaría (z 44) →
-        // calle x 34 hacia el norte → calle z 68 hacia el este → meta en el cruce x 102.
+        // 412 m, 7 giros: salida norte (x 0) → derecha en z 44 (barrera) → izquierda x 34 → derecha z 68 →
+        // izquierda x 102 → izquierda z 102 (puerta 2 y recta larga de 196 m al oeste, al norte de la
+        // comisaría) → izquierda x −102 → izquierda hacia la plaza final (meta).
         private static readonly Vector3[] RoutePoints =
         {
             new Vector3(0f, 0f, 30f), new Vector3(0f, 0f, 44f), new Vector3(34f, 0f, 44f),
-            new Vector3(34f, 0f, 68f), new Vector3(102f, 0f, 68f),
+            new Vector3(34f, 0f, 68f), new Vector3(102f, 0f, 68f), new Vector3(102f, 0f, 102f),
+            new Vector3(-102f, 0f, 102f), new Vector3(-102f, 0f, 85f), new Vector3(-85f, 0f, 85f),
         };
         private const float RouteWidth = 10f;          // ancho de las calles de la cuadrícula
         private const float BarrierDistance = 34f;     // primera calle: (20, 44)
-        private const float FinishBeforeEnd = 8f;      // meta 8 m antes del final
-        private const string MovedDoorName = "EscapeDoor_2"; // puerta 2 (id 1): pasa al cruce x 34 / z 68
-        private const float DoorDistance = 82f;        // 10 m después del cruce: (44, 68)
+        private const float FinishBeforeEnd = 4f;      // meta en la plaza: (−89, 85)
+        private const string MovedDoorName = "EscapeDoor_2"; // puerta 2 (id 1): cruce x 102 / z 102
+        private const float DoorDistance = 182f;       // 8 m después del cruce, al empezar la recta larga: (94, 102)
+        // Plaza final: la manzana x −97…−73, z 73…97 (sin edificios, pavimentada, muros y entrada abierta).
+        private static readonly Rect Plaza = Rect.MinMaxRect(-97f, 73f, -73f, 97f);
+        private const float PlazaPaveY = 0.045f;       // sobre el suelo urbano (0.03), bajo la pintura (0.05)
         private const float PaintY = 0.05f;           // sobre el suelo urbano (0.03) y las líneas de calle (0.04)
         private const float EdgeLineInset = 0.55f;     // desde el eje del muro hacia dentro
         private const float LineWidth = 0.15f;
@@ -96,6 +101,7 @@ namespace KartIHC.EditorTools
             EscapeRouteDefinition route = root.AddComponent<EscapeRouteDefinition>();
             float length = PolylineLength(RoutePoints);
             route.Configure(RoutePoints, RouteWidth, BarrierDistance, length - FinishBeforeEnd, DoorDistance);
+            route.SetPlaza(Plaza);
             route.RememberFinish(finish.transform.position, finish.transform.rotation);
             MoveDoorToRoute(route);
 
@@ -104,6 +110,7 @@ namespace KartIHC.EditorTools
             BuildWalls(root.transform, route);
             BuildFinishMark(root.transform, route);
             BuildPaint(root.transform, route);
+            BuildPlaza(root.transform, route);
 
             Undo.RecordObject(finish.transform, "Move finish to route");
             float y = finish.transform.position.y;
@@ -208,6 +215,15 @@ namespace KartIHC.EditorTools
                 BoxCollider box = piece.AddComponent<BoxCollider>();
                 box.size = new Vector3(half * 2f, GroundThickness, length);
             }
+            if (route.HasPlaza)
+            {
+                Rect plaza = route.Plaza;
+                var piece = new GameObject("City_RouteGround_Plaza");
+                piece.transform.SetParent(ground.transform, false);
+                piece.transform.position = new Vector3(plaza.center.x, -GroundThickness * 0.5f, plaza.center.y);
+                BoxCollider box = piece.AddComponent<BoxCollider>();
+                box.size = new Vector3(plaza.width + GroundExtra * 2f, GroundThickness, plaza.height + GroundExtra * 2f);
+            }
         }
 
         // ---------- Muros ----------
@@ -241,6 +257,14 @@ namespace KartIHC.EditorTools
             float laneAngle = Mathf.Acos(Mathf.Clamp(route.HalfWidth / RingClosureRadius, -1f, 1f)) * Mathf.Rad2Deg;
             AddArc(pieces, OpeningFrom, laneAngle);
             AddArc(pieces, 180f - laneAngle, OpeningTo);
+
+            // Plaza final: sin muros dentro; muros en su contorno salvo la entrada y lo que ya cubre la ruta.
+            if (route.HasPlaza)
+            {
+                pieces = ClipOutside(pieces, route.Plaza);
+                var plazaWalls = new List<WallPiece>(PlazaWalls(route, pieces)); // se lee 'pieces' antes de añadir
+                pieces.AddRange(plazaWalls);
+            }
 
             var wallsRoot = new GameObject("City_RouteWalls");
             wallsRoot.transform.SetParent(root, false);
@@ -407,6 +431,129 @@ namespace KartIHC.EditorTools
                 new[] { CityMaterials.Get(Id.PaintWhite) }, ShadowCastingMode.Off);
         }
 
+        // ---------- Plaza ----------
+
+        /// <summary>Pavimento de la plaza final (visual; el collider está en City_RouteGround_Plaza).</summary>
+        private static void BuildPlaza(Transform root, EscapeRouteDefinition route)
+        {
+            if (!route.HasPlaza) return;
+            var mesh = new CityMeshBuilder(1);
+            mesh.Top(0, route.Plaza, PlazaPaveY, 1f / CityMaterials.SidewalkTile);
+            Mesh plaza = CityGen.SaveMesh(mesh.ToMesh("City_RoutePlaza"), "City_RoutePlaza");
+            CityGen.CreateRenderer(root, "City_RoutePlaza", plaza, new[] { CityMaterials.Get(Id.Sidewalk) }, ShadowCastingMode.Off);
+        }
+
+        /// <summary>Quita de cada muro el tramo que queda dentro del rectángulo (Liang–Barsky en XZ).</summary>
+        private static List<WallPiece> ClipOutside(List<WallPiece> pieces, Rect area)
+        {
+            var result = new List<WallPiece>();
+            foreach (WallPiece piece in pieces)
+            {
+                if (!SegmentInside(piece.From, piece.To, area, out float t0, out float t1))
+                {
+                    result.Add(piece);
+                    continue;
+                }
+                Vector3 a = Vector3.Lerp(piece.From, piece.To, t0), b = Vector3.Lerp(piece.From, piece.To, t1);
+                if (Vector3.Distance(piece.From, a) > 0.05f) result.Add(new WallPiece { From = piece.From, To = a, Visible = piece.Visible });
+                if (Vector3.Distance(b, piece.To) > 0.05f) result.Add(new WallPiece { From = b, To = piece.To, Visible = piece.Visible });
+            }
+            return result;
+        }
+
+        private static IEnumerable<(Vector3, Vector3)> OutsidePlaza(EscapeRouteDefinition route, Vector3 a, Vector3 b)
+        {
+            if (!route.HasPlaza || !SegmentInside(a, b, route.Plaza, out float t0, out float t1))
+            {
+                yield return (a, b);
+                yield break;
+            }
+            Vector3 p = Vector3.Lerp(a, b, t0), q = Vector3.Lerp(a, b, t1);
+            if (Vector3.Distance(a, p) > 0.05f) yield return (a, p);
+            if (Vector3.Distance(q, b) > 0.05f) yield return (q, b);
+        }
+
+        /// <summary>Tramo [t0, t1] del segmento dentro del rectángulo (interior estricto), si lo hay.</summary>
+        private static bool SegmentInside(Vector3 a, Vector3 b, Rect area, out float t0, out float t1)
+        {
+            t0 = 0f; t1 = 1f;
+            float dx = b.x - a.x, dz = b.z - a.z;
+            float[] p = { -dx, dx, -dz, dz };
+            float[] q = { a.x - area.xMin, area.xMax - a.x, a.z - area.yMin, area.yMax - a.z };
+            for (int i = 0; i < 4; i++)
+            {
+                if (Mathf.Abs(p[i]) < 1e-6f)
+                {
+                    if (q[i] <= 0.01f) return false; // paralelo y fuera (o sobre el borde)
+                    continue;
+                }
+                float r = q[i] / p[i];
+                if (p[i] < 0f) t0 = Mathf.Max(t0, r);
+                else t1 = Mathf.Min(t1, r);
+            }
+            return t1 - t0 > 1e-4f;
+        }
+
+        /// <summary>
+        /// Muros del contorno de la plaza, sin la entrada (donde la cruza la ruta) ni los tramos que ya
+        /// cubren los muros de la ruta (colineales).
+        /// </summary>
+        private static IEnumerable<WallPiece> PlazaWalls(EscapeRouteDefinition route, List<WallPiece> existing)
+        {
+            Rect r = route.Plaza;
+            var edges = new[]
+            {
+                (new Vector3(r.xMin, 0f, r.yMin), new Vector3(r.xMax, 0f, r.yMin)),
+                (new Vector3(r.xMax, 0f, r.yMin), new Vector3(r.xMax, 0f, r.yMax)),
+                (new Vector3(r.xMax, 0f, r.yMax), new Vector3(r.xMin, 0f, r.yMax)),
+                (new Vector3(r.xMin, 0f, r.yMax), new Vector3(r.xMin, 0f, r.yMin)),
+            };
+            foreach ((Vector3 a, Vector3 b) in edges)
+            {
+                float length = Vector3.Distance(a, b);
+                Vector3 dir = (b - a) / length;
+                var blocked = new List<(float, float)>();
+                // Entrada: donde la línea central de la ruta cruza este borde.
+                for (int i = 1; i < route.PointCount; i++)
+                {
+                    if (!Intersect(a, b, route.GetPoint(i - 1), route.GetPoint(i), out float s)) continue;
+                    blocked.Add((s * length - route.HalfWidth, s * length + route.HalfWidth));
+                }
+                // Tramos ya cubiertos por muros de la ruta sobre la misma línea.
+                foreach (WallPiece piece in existing)
+                {
+                    float fa = Vector3.Dot(piece.From - a, dir), fb = Vector3.Dot(piece.To - a, dir);
+                    Vector3 side = Vector3.Cross(Vector3.up, dir);
+                    if (Mathf.Abs(Vector3.Dot(piece.From - a, side)) > 0.05f || Mathf.Abs(Vector3.Dot(piece.To - a, side)) > 0.05f) continue;
+                    blocked.Add((Mathf.Min(fa, fb), Mathf.Max(fa, fb)));
+                }
+                blocked.Sort((x, y) => x.Item1.CompareTo(y.Item1));
+                float cursor = 0f;
+                foreach ((float from, float to) in blocked)
+                {
+                    if (from > cursor + 0.05f)
+                        yield return new WallPiece { From = a + dir * cursor, To = a + dir * Mathf.Min(from, length), Visible = true };
+                    cursor = Mathf.Max(cursor, to);
+                    if (cursor >= length) break;
+                }
+                if (cursor < length - 0.05f)
+                    yield return new WallPiece { From = a + dir * cursor, To = b, Visible = true };
+            }
+        }
+
+        /// <summary>Intersección de los segmentos ab y cd en XZ; s = fracción sobre ab.</summary>
+        private static bool Intersect(Vector3 a, Vector3 b, Vector3 c, Vector3 d, out float s)
+        {
+            s = 0f;
+            float rx = b.x - a.x, rz = b.z - a.z, qx = d.x - c.x, qz = d.z - c.z;
+            float den = rx * qz - rz * qx;
+            if (Mathf.Abs(den) < 1e-6f) return false;
+            float ex = c.x - a.x, ez = c.z - a.z;
+            s = (ex * qz - ez * qx) / den;
+            float u = (ex * rz - ez * rx) / den;
+            return s >= 0f && s <= 1f && u >= 0f && u <= 1f;
+        }
+
         // ---------- Pintura ----------
 
         /// <summary>Líneas de borde, flechas de sentido y líneas de detención antes de la barrera y la puerta.</summary>
@@ -419,7 +566,9 @@ namespace KartIHC.EditorTools
                 List<Vector3> line = OffsetPolyline(route, side, inset);
                 line[0] = ExitPoint(line[0], line[1]);
                 line[line.Count - 1] += route.DirectionAt(route.Length) * inset;
-                for (int i = 1; i < line.Count; i++) PaintStrip(mesh, line[i - 1], line[i], LineWidth);
+                for (int i = 1; i < line.Count; i++)
+                    foreach ((Vector3 a, Vector3 b) in OutsidePlaza(route, line[i - 1], line[i]))
+                        PaintStrip(mesh, a, b, LineWidth);
             }
 
             foreach (float gate in new[] { route.BarrierDistance, route.DoorDistance })
@@ -432,6 +581,7 @@ namespace KartIHC.EditorTools
             for (float at = 10f; at < route.FinishDistance - 8f; at += ArrowSpacing)
             {
                 if (Mathf.Abs(at - route.BarrierDistance) < 8f || Mathf.Abs(at - route.DoorDistance) < 8f) continue;
+                if (route.InPlaza(route.PointAt(at), 1f)) continue;
                 PaintArrow(mesh, route.PointAt(at), route.DirectionAt(at));
             }
 
