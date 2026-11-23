@@ -124,6 +124,55 @@ namespace KartIHC.EditorTools
             return material;
         }
 
+        /// <summary>Guarda (o sobrescribe en el sitio, conservando referencias) una malla en Meshes/.</summary>
+        public static Mesh SaveMesh(Mesh mesh, string name)
+        {
+            EnsureFolders();
+            string path = $"{MeshesFolder}/{name}.asset";
+            mesh.name = name;
+            Mesh existing = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+            if (existing != null)
+            {
+                existing.Clear();
+                EditorUtility.CopySerialized(mesh, existing);
+                existing.name = name;
+                EditorUtility.SetDirty(existing);
+                Object.DestroyImmediate(mesh);
+                return existing;
+            }
+
+            AssetDatabase.CreateAsset(mesh, path);
+            return mesh;
+        }
+
+        /// <summary>
+        /// Hijo con MeshFilter + MeshRenderer (nunca Collider), estático para batching,
+        /// sin sondas de luz ni de reflexión.
+        /// </summary>
+        public static GameObject CreateRenderer(Transform parent, string name, Mesh mesh, Material[] materials,
+            UnityEngine.Rendering.ShadowCastingMode shadows)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent, false);
+            go.AddComponent<MeshFilter>().sharedMesh = mesh;
+            MeshRenderer renderer = go.AddComponent<MeshRenderer>();
+            renderer.sharedMaterials = materials;
+            renderer.shadowCastingMode = shadows;
+            renderer.receiveShadows = true;
+            renderer.lightProbeUsage = UnityEngine.Rendering.LightProbeUsage.Off;
+            renderer.reflectionProbeUsage = UnityEngine.Rendering.ReflectionProbeUsage.Off;
+            GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
+            return go;
+        }
+
+        /// <summary>LODGroup de un solo nivel: el objeto desaparece por debajo de 'cullHeight' de la pantalla.</summary>
+        public static void AddCullingLod(GameObject go, float cullHeight)
+        {
+            LODGroup group = go.AddComponent<LODGroup>();
+            group.SetLODs(new[] { new LOD(cullHeight, go.GetComponentsInChildren<Renderer>()) });
+            group.RecalculateBounds();
+        }
+
         // ---------- Prefab ----------
 
         public static GameObject LoadPrefabAsset() => AssetDatabase.LoadAssetAtPath<GameObject>(PrefabPath);
@@ -132,21 +181,28 @@ namespace KartIHC.EditorTools
         /// Sustituye la sección hija 'sectionName' del prefab por la que construye 'build'
         /// y guarda el prefab. Si el resultado tiene algún Collider, lanza y no guarda.
         /// </summary>
-        public static void ReplacePrefabSection(string sectionName, Action<Transform> build)
+        public static void ReplacePrefabSection(string sectionName, Action<Transform> build) =>
+            ReplacePrefabSections((sectionName, build));
+
+        /// <summary>Como ReplacePrefabSection, pero varias secciones con una sola carga/guardado del prefab.</summary>
+        public static void ReplacePrefabSections(params (string name, Action<Transform> build)[] sections)
         {
             EnsurePrefabAsset();
             GameObject contents = PrefabUtility.LoadPrefabContents(PrefabPath);
             try
             {
-                Transform previous = contents.transform.Find(sectionName);
-                if (previous != null)
+                foreach ((string sectionName, Action<Transform> build) in sections)
                 {
-                    Object.DestroyImmediate(previous.gameObject);
-                }
+                    Transform previous = contents.transform.Find(sectionName);
+                    if (previous != null)
+                    {
+                        Object.DestroyImmediate(previous.gameObject);
+                    }
 
-                var section = new GameObject(sectionName);
-                section.transform.SetParent(contents.transform, false);
-                build(section.transform);
+                    var section = new GameObject(sectionName);
+                    section.transform.SetParent(contents.transform, false);
+                    build(section.transform);
+                }
 
                 AssertNoColliders(contents);
                 PrefabUtility.SaveAsPrefabAsset(contents, PrefabPath, out bool saved);
