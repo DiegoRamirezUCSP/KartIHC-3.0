@@ -296,6 +296,19 @@ namespace KartIHC.UI
                     bounds.Encapsulate(max);
                 }
             }
+            // Ruta por la ciudad (KartIHC/City/Route On∕Off): el mapa la abarca entera.
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            if (route != null)
+            {
+                for (int i = 0; i < route.PointCount; i++)
+                {
+                    Vector3 point = route.GetPoint(i);
+                    var extent = new Vector3(route.HalfWidth, 0f, route.HalfWidth);
+                    if (!hasBounds) { bounds = new Bounds(point, Vector3.zero); hasBounds = true; }
+                    bounds.Encapsulate(point - extent);
+                    bounds.Encapsulate(point + extent);
+                }
+            }
             if (!hasBounds) bounds = new Bounds(Vector3.zero, new Vector3(80f, 1f, 80f));
 
             float span = Mathf.Max(bounds.size.x, bounds.size.z) + WorldPadding * 2f;
@@ -324,6 +337,12 @@ namespace KartIHC.UI
                 Color32 color = layer == 0 ? CityColor : layer == 1 ? RoadColor : BarrierColor;
                 foreach ((MeshRenderer renderer, int sourceLayer) in sources)
                     if (sourceLayer == layer) RasterizeBox(renderer, pixels, color, texel);
+                if (route != null && layer == 1) FillRoute(pixels, route, color, texel, -1f, route.HalfWidth);
+                if (route != null && layer == 2)
+                {
+                    FillRoute(pixels, route, color, texel, route.HalfWidth - 0.45f, route.HalfWidth + 0.45f);
+                    FillRingClosure(pixels, route, color, texel);
+                }
             }
             mapTexture.SetPixels32(pixels);
             mapTexture.Apply();
@@ -343,6 +362,55 @@ namespace KartIHC.UI
                 return objectName.Contains("Wall") ? 2 : objectName == "ExitRoad" ? 1 : 0;
             }
             return -1;
+        }
+
+        /// <summary>
+        /// Pinta los texels cuya distancia a la línea central de la ruta está entre minLateral y
+        /// maxLateral (calzada: −1..ancho/2; muros: el borde). Fuera del anillo solamente.
+        /// </summary>
+        private void FillRoute(Color32[] pixels, EscapeRouteDefinition route, Color32 color, float texel,
+            float minLateral, float maxLateral)
+        {
+            var area = new Rect();
+            for (int i = 0; i < route.PointCount; i++)
+            {
+                Vector3 p = route.GetPoint(i);
+                var r = Rect.MinMaxRect(p.x - maxLateral, p.z - maxLateral, p.x + maxLateral, p.z + maxLateral);
+                area = i == 0 ? r : Rect.MinMaxRect(Mathf.Min(area.xMin, r.xMin), Mathf.Min(area.yMin, r.yMin),
+                    Mathf.Max(area.xMax, r.xMax), Mathf.Max(area.yMax, r.yMax));
+            }
+            float ringOuter = EscapeTrackGeometry.OuterRadius + 0.4f;
+            ForTexels(area, texel, (x, y, world) =>
+            {
+                if (new Vector2(world.x, world.z).magnitude < ringOuter) return;
+                route.Project(world, out float lateral);
+                if (lateral > minLateral && lateral <= maxLateral) pixels[y * MapResolution + x] = color;
+            });
+        }
+
+        /// <summary>Cierre de la apertura norte del anillo a ambos lados del carril de la ruta (muros de la ruta).</summary>
+        private void FillRingClosure(Color32[] pixels, EscapeRouteDefinition route, Color32 color, float texel)
+        {
+            float outer = EscapeTrackGeometry.OuterRadius;
+            ForTexels(Rect.MinMaxRect(-outer - 1f, 0f, outer + 1f, outer + 1f), texel, (x, y, world) =>
+            {
+                float radius = new Vector2(world.x, world.z).magnitude;
+                float angle = Mathf.Atan2(world.z, world.x) * Mathf.Rad2Deg;
+                if (Mathf.Abs(radius - outer) <= 0.45f && angle > 52.5f && angle < 127.5f &&
+                    Mathf.Abs(world.x) > route.HalfWidth)
+                    pixels[y * MapResolution + x] = color;
+            });
+        }
+
+        private void ForTexels(Rect area, float texel, Action<int, int, Vector3> visit)
+        {
+            int minX = Mathf.Clamp(Mathf.FloorToInt((area.xMin - worldRect.x) / texel), 0, MapResolution - 1);
+            int maxX = Mathf.Clamp(Mathf.CeilToInt((area.xMax - worldRect.x) / texel), 0, MapResolution - 1);
+            int minY = Mathf.Clamp(Mathf.FloorToInt((area.yMin - worldRect.y) / texel), 0, MapResolution - 1);
+            int maxY = Mathf.Clamp(Mathf.CeilToInt((area.yMax - worldRect.y) / texel), 0, MapResolution - 1);
+            for (int y = minY; y <= maxY; y++)
+                for (int x = minX; x <= maxX; x++)
+                    visit(x, y, new Vector3(worldRect.x + (x + 0.5f) * texel, 0f, worldRect.y + (y + 0.5f) * texel));
         }
 
         /// <summary>Rellena un rectángulo del mundo (x, z) alineado con los ejes.</summary>

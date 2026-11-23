@@ -17,6 +17,15 @@ namespace KartIHC.Gameplay
         private float barrierDistance = 34f;
         [SerializeField, Tooltip("Distancia a lo largo de la ruta donde va la meta.")]
         private float finishDistance = 130f;
+        [SerializeField, Tooltip("Distancia a lo largo de la ruta donde va la puerta movida (cruce).")]
+        private float doorDistance = 82f;
+
+        // Puerta del anillo movida a la ruta (pivote EscapeDoor_N), para restaurarla con Route Off.
+        [SerializeField] private string movedDoorName = "";
+        [SerializeField] private Vector3 originalDoorPosition;
+        [SerializeField] private Quaternion originalDoorRotation = Quaternion.identity;
+        [SerializeField] private Vector3 originalPanelLocalPosition;
+        [SerializeField] private Quaternion originalPanelLocalRotation = Quaternion.identity;
 
         // Posición original de la meta del anillo, para restaurarla con Route Off.
         [SerializeField] private bool hasOriginalFinish;
@@ -44,6 +53,12 @@ namespace KartIHC.Gameplay
         public Vector3 GetPoint(int index) => Flat(points[index]);
         public float BarrierDistance => barrierDistance;
         public float FinishDistance => finishDistance;
+        public float DoorDistance => doorDistance;
+        public string MovedDoorName => movedDoorName;
+        public Vector3 OriginalDoorPosition => originalDoorPosition;
+        public Quaternion OriginalDoorRotation => originalDoorRotation;
+        public Vector3 OriginalPanelLocalPosition => originalPanelLocalPosition;
+        public Quaternion OriginalPanelLocalRotation => originalPanelLocalRotation;
         public bool HasOriginalFinish => hasOriginalFinish;
         public Vector3 OriginalFinishPosition => originalFinishPosition;
         public Quaternion OriginalFinishRotation => originalFinishRotation;
@@ -65,12 +80,23 @@ namespace KartIHC.Gameplay
             if (active == this) active = null;
         }
 
-        public void Configure(Vector3[] routePoints, float routeWidth, float barrierAt, float finishAt)
+        public void Configure(Vector3[] routePoints, float routeWidth, float barrierAt, float finishAt, float doorAt)
         {
             points = (Vector3[])routePoints.Clone();
             width = routeWidth;
             barrierDistance = barrierAt;
             finishDistance = finishAt;
+            doorDistance = doorAt;
+        }
+
+        public void RememberDoor(string doorName, Vector3 position, Quaternion rotation,
+            Vector3 panelLocalPosition, Quaternion panelLocalRotation)
+        {
+            movedDoorName = doorName;
+            originalDoorPosition = position;
+            originalDoorRotation = rotation;
+            originalPanelLocalPosition = panelLocalPosition;
+            originalPanelLocalRotation = panelLocalRotation;
         }
 
         public void RememberFinish(Vector3 position, Quaternion rotation)

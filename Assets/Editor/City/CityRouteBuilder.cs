@@ -39,6 +39,12 @@ namespace KartIHC.EditorTools
         private const float RouteWidth = 10f;          // ancho de las calles de la cuadrícula
         private const float BarrierDistance = 34f;     // primera calle: (20, 44)
         private const float FinishBeforeEnd = 8f;      // meta 8 m antes del final
+        private const string MovedDoorName = "EscapeDoor_2"; // puerta 2 (id 1): pasa al cruce x 34 / z 68
+        private const float DoorDistance = 82f;        // 10 m después del cruce: (44, 68)
+        private const float PaintY = 0.05f;           // sobre el suelo urbano (0.03) y las líneas de calle (0.04)
+        private const float EdgeLineInset = 0.55f;     // desde el eje del muro hacia dentro
+        private const float LineWidth = 0.15f;
+        private const float ArrowSpacing = 16f;
         // Igual que las barreras del anillo (2.3 × 0.6 m) y con su carcasa roja/blanca de P3: la caja
         // de colisión del kart va de 0.52 a 2.57 m sobre el suelo y un muro de 1.1 m se podía montar.
         // Sigue muy por debajo de la altura de vuelo del dron (12–20 m).
@@ -89,13 +95,15 @@ namespace KartIHC.EditorTools
             Undo.RegisterCreatedObjectUndo(root, "Create " + RootName);
             EscapeRouteDefinition route = root.AddComponent<EscapeRouteDefinition>();
             float length = PolylineLength(RoutePoints);
-            route.Configure(RoutePoints, RouteWidth, BarrierDistance, length - FinishBeforeEnd);
+            route.Configure(RoutePoints, RouteWidth, BarrierDistance, length - FinishBeforeEnd, DoorDistance);
             route.RememberFinish(finish.transform.position, finish.transform.rotation);
+            MoveDoorToRoute(route);
 
             CityMaterials.BuildAll();
             BuildGround(root.transform, route);
             BuildWalls(root.transform, route);
             BuildFinishMark(root.transform, route);
+            BuildPaint(root.transform, route);
 
             Undo.RecordObject(finish.transform, "Move finish to route");
             float y = finish.transform.position.y;
@@ -120,6 +128,7 @@ namespace KartIHC.EditorTools
                 Undo.RecordObject(finish.transform, "Restore finish");
                 finish.transform.SetPositionAndRotation(route.OriginalFinishPosition, route.OriginalFinishRotation);
             }
+            RestoreDoor(route);
             Undo.DestroyObjectImmediate(route.gameObject);
             EnvGen.EndUndo();
 
@@ -127,6 +136,50 @@ namespace KartIHC.EditorTools
             CityStreetsBuilder.Build();
             CityGen.MarkSceneDirty();
             Debug.Log("[City] Ruta desactivada: anillo original restaurado (meta en su sitio). Guarda la escena.");
+        }
+
+        // ---------- Puerta 2 ----------
+
+        /// <summary>
+        /// Lleva EscapeDoor_2 a la ruta con el pivote en el centro de la calle y la hoja centrada en él
+        /// (local (0, y, 0), sin giro): así el alcance de hackeo (7 m desde el pivote en el bridge),
+        /// el indicador y el minimapa apuntan a la calle. En la escena la hoja tenía un ajuste local
+        /// propio (a ~14.6 m del pivote); se guarda y Route Off lo restaura junto con el pivote.
+        /// Abierta, la hoja gira 90° sobre su centro y queda paralela a la calle (~4.7 m libres a cada lado).
+        /// </summary>
+        private static void MoveDoorToRoute(EscapeRouteDefinition route)
+        {
+            Transform pivot = GameObject.Find(MovedDoorName)?.transform;
+            Transform panel = pivot != null ? (pivot.Find("Door Panel") ?? (pivot.childCount > 0 ? pivot.GetChild(0) : null)) : null;
+            if (panel == null)
+            {
+                Debug.LogWarning($"[City] No se encontró {MovedDoorName}/Door Panel: la puerta 2 se queda en el anillo.");
+                return;
+            }
+
+            route.RememberDoor(MovedDoorName, pivot.position, pivot.rotation, panel.localPosition, panel.localRotation);
+            float at = route.DoorDistance;
+            Undo.RecordObject(pivot, "Move door to route");
+            Undo.RecordObject(panel, "Move door to route");
+            pivot.SetPositionAndRotation(route.PointAt(at) + Vector3.up * pivot.position.y, route.RotationAt(at));
+            panel.localPosition = new Vector3(0f, panel.localPosition.y, 0f);
+            panel.localRotation = Quaternion.identity; // eje largo (X local) cruzando la calle
+        }
+
+        private static void RestoreDoor(EscapeRouteDefinition route)
+        {
+            if (string.IsNullOrEmpty(route.MovedDoorName)) return;
+            Transform pivot = GameObject.Find(route.MovedDoorName)?.transform;
+            if (pivot == null) return;
+            Transform panel = pivot.Find("Door Panel") ?? (pivot.childCount > 0 ? pivot.GetChild(0) : null);
+            Undo.RecordObject(pivot, "Restore door");
+            pivot.SetPositionAndRotation(route.OriginalDoorPosition, route.OriginalDoorRotation);
+            if (panel != null)
+            {
+                Undo.RecordObject(panel, "Restore door");
+                panel.localPosition = route.OriginalPanelLocalPosition;
+                panel.localRotation = route.OriginalPanelLocalRotation;
+            }
         }
 
         private static EscapeFinishZone FindAuthoredFinish()
@@ -262,7 +315,10 @@ namespace KartIHC.EditorTools
         }
 
         /// <summary>Polilínea desplazada medio ancho (+1 izquierda, −1 derecha) con esquinas a inglete.</summary>
-        private static List<Vector3> OffsetPolyline(EscapeRouteDefinition route, float side)
+        private static List<Vector3> OffsetPolyline(EscapeRouteDefinition route, float side) =>
+            OffsetPolyline(route, side, route.HalfWidth);
+
+        private static List<Vector3> OffsetPolyline(EscapeRouteDefinition route, float side, float offset)
         {
             var result = new List<Vector3>();
             int count = route.PointCount;
@@ -272,7 +328,7 @@ namespace KartIHC.EditorTools
                 Vector3 nPrev = i > 0 ? LeftNormal(route.GetPoint(i - 1), p) : LeftNormal(p, route.GetPoint(i + 1));
                 Vector3 nNext = i < count - 1 ? LeftNormal(p, route.GetPoint(i + 1)) : nPrev;
                 Vector3 miter = (nPrev + nNext).normalized;
-                float scale = route.HalfWidth / Mathf.Max(0.2f, Vector3.Dot(miter, nPrev));
+                float scale = offset / Mathf.Max(0.2f, Vector3.Dot(miter, nPrev));
                 result.Add(p + miter * (scale * side));
             }
             return result;
@@ -350,6 +406,69 @@ namespace KartIHC.EditorTools
             CityGen.CreateRenderer(root, "City_RouteFinishMark", finishMesh,
                 new[] { CityMaterials.Get(Id.PaintWhite) }, ShadowCastingMode.Off);
         }
+
+        // ---------- Pintura ----------
+
+        /// <summary>Líneas de borde, flechas de sentido y líneas de detención antes de la barrera y la puerta.</summary>
+        private static void BuildPaint(Transform root, EscapeRouteDefinition route)
+        {
+            var mesh = new CityMeshBuilder(1);
+            float inset = route.HalfWidth - EdgeLineInset;
+            foreach (float side in new[] { 1f, -1f })
+            {
+                List<Vector3> line = OffsetPolyline(route, side, inset);
+                line[0] = ExitPoint(line[0], line[1]);
+                line[line.Count - 1] += route.DirectionAt(route.Length) * inset;
+                for (int i = 1; i < line.Count; i++) PaintStrip(mesh, line[i - 1], line[i], LineWidth);
+            }
+
+            foreach (float gate in new[] { route.BarrierDistance, route.DoorDistance })
+            {
+                float at = gate - 3f;
+                Vector3 c = route.PointAt(at), right = Right(route.DirectionAt(at));
+                PaintStrip(mesh, c - right * inset, c + right * inset, 0.4f);
+            }
+
+            for (float at = 10f; at < route.FinishDistance - 8f; at += ArrowSpacing)
+            {
+                if (Mathf.Abs(at - route.BarrierDistance) < 8f || Mathf.Abs(at - route.DoorDistance) < 8f) continue;
+                PaintArrow(mesh, route.PointAt(at), route.DirectionAt(at));
+            }
+
+            Mesh paint = CityGen.SaveMesh(mesh.ToMesh("City_RoutePaint"), "City_RoutePaint");
+            CityGen.CreateRenderer(root, "City_RoutePaint", paint, new[] { CityMaterials.Get(Id.PaintWhite) }, ShadowCastingMode.Off);
+        }
+
+        private static void PaintStrip(CityMeshBuilder mesh, Vector3 from, Vector3 to, float width)
+        {
+            Vector3 dir = (to - from).normalized;
+            Vector3 r = Right(dir) * (width * 0.5f);
+            Vector3 up = Vector3.up * PaintY;
+            FlatQuad(mesh, from - r + up, from + r + up, to + r + up, to - r + up);
+        }
+
+        private static void PaintArrow(CityMeshBuilder mesh, Vector3 center, Vector3 dir)
+        {
+            Vector3 r = Right(dir), up = Vector3.up * PaintY;
+            Vector3 tail = center - dir * 1.5f, neck = center + dir * 0.5f, tip = center + dir * 1.7f;
+            FlatQuad(mesh, tail - r * 0.15f + up, tail + r * 0.15f + up, neck + r * 0.15f + up, neck - r * 0.15f + up);
+            FlatTriangle(mesh, neck - r * 0.6f + up, tip + up, neck + r * 0.6f + up);
+        }
+
+        /// <summary>Quad horizontal con normal hacia arriba sea cual sea el orden de los vértices.</summary>
+        private static void FlatQuad(CityMeshBuilder mesh, Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3)
+        {
+            if (Vector3.Cross(p3 - p0, p1 - p0).y < 0f) (p1, p3) = (p3, p1);
+            mesh.Quad(0, p0, p1, p2, p3, Vector2.zero, Vector2.right, Vector2.one, Vector2.up);
+        }
+
+        private static void FlatTriangle(CityMeshBuilder mesh, Vector3 a, Vector3 b, Vector3 c)
+        {
+            if (Vector3.Cross(b - a, c - a).y < 0f) (b, c) = (c, b);
+            mesh.Triangle(0, a, b, c, Vector3.up, Vector2.zero, Vector2.right, Vector2.up);
+        }
+
+        private static Vector3 Right(Vector3 dir) => new Vector3(dir.z, 0f, -dir.x);
 
         // ---------- Utilidades ----------
 
