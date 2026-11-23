@@ -189,7 +189,10 @@ namespace KartIHC.Gameplay.Hazards
 
         private void UpdateVisibility()
         {
-            hidden = EscapePoliceStationGenerator.Instance != null && !debugReveal;
+            // Solo Escape Solo oculta los obstáculos (no hay hacker que los abra). La policía existe
+            // también en cooperativo desde que Diego la activa para ambos roles.
+            EscapePoliceStationGenerator police = EscapePoliceStationGenerator.Instance;
+            hidden = police != null && police.IsSoloMode && !debugReveal;
             if (obstacleRoot == null || obstacleRoot.gameObject.activeSelf != hidden) return;
             obstacleRoot.gameObject.SetActive(!hidden);
             if (hidden) EndMinigame();
