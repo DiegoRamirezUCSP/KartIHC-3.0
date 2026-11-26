@@ -9,7 +9,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
     private const int PatrolCount = 4;
     private const float ChaseDuration = 15f;
     private const float TrapInterval = 15f;
-    private const float RespawnDelay = 10f;
+    private const float RespawnDelay = 20f;
     private const float SpawnInterval = 10f;   // 1 patrulla al inicio y +1 cada 10 s hasta PatrolCount
     private const int MaxChasing = 2;
     private const float PatrolSpeed = 7f;
@@ -82,6 +82,7 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         if (soloRules) HideEscapeDoors();
         BuildExitSpurAndStation(soloRules);
         SpawnPatrols();
+        CreateKartPowerUpPickups();
         OpenOuterBoundary();
         EscapeMinimap.RegisterMarkerSource(AddMinimapMarkers);
         string roleLabel = authoritative ? "autoridad del conductor" : "presentación local del hacker";
@@ -494,6 +495,60 @@ public sealed class EscapePoliceStationGenerator : MonoBehaviour
         nextDoorSearchAt[id] = Time.time + id * 0.2f;
         patrols[id] = police;
         respawnAt[id] = float.PositiveInfinity;
+    }
+
+    private void CreateKartPowerUpPickups()
+    {
+        // Reuse the Race inventory and ItemPickup behavior. Only the driver owns
+        // pickups so the remote kart copy on the hacker cannot collect them twice.
+        if (!authoritative) return;
+
+        KartIHC.Gameplay.EscapeRouteDefinition route = KartIHC.Gameplay.EscapeRouteDefinition.Active;
+        Vector3[] positions;
+        if (route != null && route.Length > 30f)
+        {
+            positions = new[]
+            {
+                route.PointAt(route.Length * 0.22f),
+                route.PointAt(route.Length * 0.50f),
+                route.PointAt(route.Length * 0.78f)
+            };
+        }
+        else
+        {
+            positions = new[]
+            {
+                KartIHC.Gameplay.EscapeTrackGeometry.PointAt(35f, patrolRoadRadius, 0f),
+                KartIHC.Gameplay.EscapeTrackGeometry.PointAt(155f, patrolRoadRadius, 0f),
+                KartIHC.Gameplay.EscapeTrackGeometry.PointAt(275f, patrolRoadRadius, 0f)
+            };
+        }
+
+        for (int i = 0; i < positions.Length; i++)
+        {
+            GameObject pickup = GameObject.CreatePrimitive(PrimitiveType.Cube);
+            pickup.name = $"EscapeKartPowerUp_{i + 1}";
+            pickup.transform.SetParent(transform, true);
+            pickup.transform.position = positions[i] + Vector3.up * 1f;
+            pickup.transform.localScale = Vector3.one * 1.25f;
+            Renderer renderer = pickup.GetComponent<Renderer>();
+            if (renderer != null) renderer.material.color = new Color(1f, 0.68f, 0.08f);
+            BoxCollider trigger = pickup.GetComponent<BoxCollider>();
+            trigger.isTrigger = true;
+
+            GameObject labelObject = new GameObject("PowerUpQuestionMark");
+            labelObject.transform.SetParent(pickup.transform, false);
+            labelObject.transform.localPosition = new Vector3(0f, 0f, -0.52f);
+            TextMesh label = labelObject.AddComponent<TextMesh>();
+            label.text = "?";
+            label.anchor = TextAnchor.MiddleCenter;
+            label.alignment = TextAlignment.Center;
+            label.fontStyle = FontStyle.Bold;
+            label.fontSize = 64;
+            label.characterSize = 0.045f;
+            label.color = Color.white;
+            pickup.AddComponent<ItemPickup>();
+        }
     }
 
     public bool TryGetPoliceNetworkState(int id, out bool active, out Vector3 position,

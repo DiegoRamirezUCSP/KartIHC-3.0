@@ -30,6 +30,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private const float PoliceSendInterval = 1f / 10f;
     private const float DroneTiltDeadzone = 0.12f;
     private const float DoorHackRangeMeters = 7f;
+    private const float DoorAutoOpenDelaySeconds = 30f;
     private const int HackPatternLength = 6;
     private const float HackTimeLimitSeconds = 10f;
     private const float HackFailureLockSeconds = 15f;
@@ -50,6 +51,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
     private float nextKartSend;
     private float nextPoliceSend;
     private float nextDroneSend;
+    private float doorAutoOpenAt;
+    private bool doorAutoOpenTimerStarted;
+    private bool doorsAutoOpened;
     private long nextLatencyProbeTimestamp;
     private ulong nextLatencySequence;
     private ulong latencyPeerId;
@@ -183,6 +187,9 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         hackDoorId = -1;
         hackPatternProgress = 0;
         droneLockedUntil = 0f;
+        doorAutoOpenAt = 0f;
+        doorAutoOpenTimerStarted = false;
+        doorsAutoOpened = false;
         isHost = hostRole;
         isHacker = !hostRole;
         networkDiagnosticsEnabled = !practice;
@@ -226,6 +233,7 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
         if (networkManager == null) networkManager = NetworkManager.Singleton;
         if (!handlersRegistered) RegisterMessagesWhenReady();
         if (voiceInput == null) BindVoiceInput();
+        UpdateDoorAutoOpenTimer();
         if (communicationMarker != null)
         {
             if (Time.unscaledTime >= communicationMarkerExpiresAt) Destroy(communicationMarker);
@@ -277,6 +285,40 @@ public sealed class EscapeModeNetworkBridge : MonoBehaviour
 
         UpdateLatencyTest();
         if (isHacker) UpdateHackerControls();
+    }
+
+    private void UpdateDoorAutoOpenTimer()
+    {
+        if (!isHost || HasWon || HasLost || doorsAutoOpened) return;
+
+        // Escape Solo Patrullas oculta las puertas, así que no debe anunciar
+        // una apertura que no puede ocurrir en ese modo.
+        EscapePoliceStationGenerator police = EscapePoliceStationGenerator.Instance;
+        if (police != null && police.IsSoloMode) return;
+
+        if (!doorAutoOpenTimerStarted)
+        {
+            bool sessionReady = !networked || networkManager == null || !networkManager.IsListening ||
+                                networkManager.ConnectedClients.Count > 1;
+            if (!sessionReady) return;
+            doorAutoOpenAt = Time.time + DoorAutoOpenDelaySeconds;
+            doorAutoOpenTimerStarted = true;
+            EscapeModeHudFeed.Publish("Las puertas se abrirán automáticamente en 30 segundos.");
+        }
+
+        if (Time.time < doorAutoOpenAt) return;
+        doorsAutoOpened = true;
+
+        // En el modo Python, el servidor abre las puertas para que ambos clientes
+        // reciban el mismo cambio dentro del snapshot compartido.
+        if (PythonEscapeModeBridge.Instance != null) return;
+
+        for (int i = 0; i < doorStates.Length && i < EscapeCourseBuilder.Doors.Count; i++)
+        {
+            EscapeDoor door = EscapeCourseBuilder.Doors[i];
+            if (door != null && door.gameObject.activeInHierarchy && !doorStates[i])
+                RequestDoorState(i, true);
+        }
     }
 
     private void RegisterMessagesWhenReady()

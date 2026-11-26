@@ -60,6 +60,7 @@ namespace KartIHC.UI
         private const int MapResolution = 256;
         private const int RouteMapResolution = 512;     // con la ruta por la ciudad (zona ~220 m)
         private const float RouteViewMeters = 120f;     // ventana centrada en el kart cuando va por la ruta
+        private const float RingViewMeters = 84f;       // ventana local centrada en el jugador alrededor del anillo
         private const float ViewBlendSpeed = 4f;
         private const float KartOnRouteFrom = 4f;
         private const float WorldPadding = 4f;
@@ -522,7 +523,7 @@ namespace KartIHC.UI
             BuildLegendItems(showKart, expectDrone, droneFresh, anyDoor);
             Rect panel = ComputePanelRect(bridge, Mathf.CeilToInt(legendItems.Count / 2f), out Rect map, out Rect legend);
             KartUIStyle.Panel(panel, accentBar: false);
-            UpdateView();
+            UpdateView(bridge);
             GUI.DrawTextureWithTexCoords(map, mapTexture, new Rect(
                 (viewRect.x - worldRect.x) / worldRect.width, (viewRect.y - worldRect.y) / worldRect.height,
                 viewRect.width / worldRect.width, viewRect.height / worldRect.height), true);
@@ -591,22 +592,25 @@ namespace KartIHC.UI
         }
 
         /// <summary>
-        /// Encuadre: el del anillo, o una ventana de RouteViewMeters centrada en el kart cuando va por la
-        /// ruta (dentro de los límites de la textura). Transición suave entre ambos.
+        /// El conductor sigue al kart y el hacker al dron. El norte queda fijo arriba; textura,
+        /// ruta y marcadores se desplazan bajo el jugador. La ventana se limita a la textura global.
         /// </summary>
-        private void UpdateView()
+        private void UpdateView(EscapeModeNetworkBridge bridge)
         {
-            Rect target = ringViewRect;
-            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
-            if (route != null && kart != null &&
-                route.Contains(kart.transform.position, 1f, out float along) && along >= KartOnRouteFrom)
+            Transform followTarget = bridge.IsHacker ? bridge.ReconDroneTransform : null;
+            if (followTarget == null && kart != null) followTarget = kart.transform;
+            if (followTarget == null)
             {
-                float size = Mathf.Min(RouteViewMeters, worldRect.width);
-                Vector3 k = kart.transform.position;
-                float x = Mathf.Clamp(k.x - size * 0.5f, worldRect.xMin, worldRect.xMax - size);
-                float z = Mathf.Clamp(k.z - size * 0.5f, worldRect.yMin, worldRect.yMax - size);
-                target = new Rect(x, z, size, size);
+                viewRect = ringViewRect;
+                return;
             }
+
+            EscapeRouteDefinition route = EscapeRouteDefinition.Active;
+            float size = Mathf.Min(route != null ? RouteViewMeters : RingViewMeters, worldRect.width);
+            Vector3 position = followTarget.position;
+            float x = Mathf.Clamp(position.x - size * 0.5f, worldRect.xMin, worldRect.xMax - size);
+            float z = Mathf.Clamp(position.z - size * 0.5f, worldRect.yMin, worldRect.yMax - size);
+            Rect target = new Rect(x, z, size, size);
             float t = 1f - Mathf.Exp(-Time.unscaledDeltaTime * ViewBlendSpeed);
             viewRect = new Rect(Mathf.Lerp(viewRect.x, target.x, t), Mathf.Lerp(viewRect.y, target.y, t),
                 Mathf.Lerp(viewRect.width, target.width, t), Mathf.Lerp(viewRect.height, target.height, t));

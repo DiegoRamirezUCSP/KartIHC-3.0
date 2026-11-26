@@ -110,6 +110,8 @@ class Game:
         self.doors = [False] * self.cfg.obstacles
         self.hack_obstacle = -1
         self.hack_deadline = 0.0
+        self.auto_open_doors_at: Optional[float] = None
+        self.auto_open_doors_done = False
         self.traps: Dict[int, List[float]] = {}
         self.next_trap_id = 1
         self.police_states = [
@@ -388,6 +390,12 @@ class Game:
         now = self.clock()
         self.tick_n += 1
         out: List[Out] = []
+        if self.phase == "playing" and self.auto_open_doors_at is None:
+            self.auto_open_doors_at = now + 30.0
+        if (self.phase == "playing" and self.auto_open_doors_at is not None and not self.auto_open_doors_done
+                and now >= self.auto_open_doors_at):
+            self.doors = [True] * len(self.doors)
+            self.auto_open_doors_done = True
         if self._hack_active() and now >= self.hack_deadline:
             if self.cfg.timeout_is_fail:
                 out += self._finish_hack(False, "tiempo", now)

@@ -28,7 +28,9 @@ Para jugar en la misma Wi-Fi con el servidor Python:
 - Hacker: `buscar modo escape local`
 - Salir: `salir modo escape local`
 
-El conductor inicia el servidor Python local y se conecta como cliente. El hacker descubre ese servidor por broadcast UDP y se conecta como cliente. Ambos equipos deben estar en la misma Wi-Fi. Python debe estar instalado en la PC del conductor y autorizado en redes privadas por Windows Firewall; la PC del hacker no necesita Python. El cliente Python sincroniza las posiciones del kart y del dron, el estado de las puertas, la meta y las mediciones RTT.
+El conductor inicia el servidor Python local y se conecta como cliente. El hacker descubre ese servidor por broadcast UDP y se conecta como cliente. Ambos equipos deben estar en la misma Wi-Fi. Python debe estar instalado en la PC del conductor y autorizado en redes privadas por Windows Firewall; la PC del hacker no necesita Python. El cliente Python sincroniza las posiciones del kart, del dron y de las patrullas, el estado de las puertas, la meta y las mediciones RTT. Las puertas se abren automáticamente a los 30 segundos de comenzar la partida; el hacker puede cerrarlas después.
+
+En Escape, el conductor también encuentra cajas de potenciadores a lo largo de la ruta. Cada caja entrega un elemento aleatorio del inventario de Carrera (escudo, turbo o trampa) y reaparece tras 10 segundos. Las patrullas eliminadas reaparecen en la comisaría tras 20 segundos.
 
 La sonda RTT viaja por TCP; mide el tiempo de ida y vuelta de la aplicación. El contador «sin respuesta» indica sondas que superaron el tiempo de espera, no la pérdida bruta de paquetes IP, porque TCP retransmite los paquetes perdidos.
 
